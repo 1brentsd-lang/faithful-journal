@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 class AppSpacing {
   // Spacing values
@@ -364,7 +363,7 @@ TextTheme _buildTextTheme(Brightness brightness) {
       fontSize: FontSizes.titleLarge,
       fontWeight: FontWeight.w600,
     ),
-    titleMedium: const TextStyle(
+    titleMedium: cgit add .
       fontSize: FontSizes.titleMedium,
       fontWeight: FontWeight.w500,
     ),
