@@ -363,7 +363,7 @@ TextTheme _buildTextTheme(Brightness brightness) {
       fontSize: FontSizes.titleLarge,
       fontWeight: FontWeight.w600,
     ),
-    titleMedium: cgit add .
+    titleMedium: const TextStyle(
       fontSize: FontSizes.titleMedium,
       fontWeight: FontWeight.w500,
     ),
