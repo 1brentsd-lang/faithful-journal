@@ -4,6 +4,7 @@ import 'package:faithful_journal/theme.dart';
 import 'package:faithful_journal/nav.dart';
 import 'package:faithful_journal/auth/supabase_auth_manager.dart';
 import 'package:faithful_journal/services/entry_service.dart';
+import 'package:faithful_journal/services/unsaved_changes_service.dart';
 import 'package:faithful_journal/supabase/supabase_config.dart';
 
 Future<void> main() async {
@@ -27,6 +28,7 @@ class MyApp extends StatelessWidget {
       providers: [
         Provider(create: (_) => SupabaseAuthManager()),
         ChangeNotifierProvider(create: (_) => EntryService()),
+        ChangeNotifierProvider(create: (_) => UnsavedChangesService()),
       ],
       child: MaterialApp.router(
         title: 'Faithful Journal',

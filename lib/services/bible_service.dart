@@ -12,6 +12,89 @@ import 'package:http/http.dart' as http;
 class BibleService {
   static const _base = 'https://bible-api.com';
 
+  static const Set<String> _knownTranslations = {
+    'WEB',
+    'ESV',
+    'NIV',
+    'NLT',
+    'CSB',
+    'KJV',
+  };
+
+  /// Parses a free-form Scripture reference into lightweight metadata.
+  ///
+  /// Supports inputs like:
+  /// - "Romans 8:28-30 ESV"
+  /// - "1 John 4:7"
+  /// - "Psalm 23"
+  ///
+  /// Notes:
+  /// - The original string should remain unchanged in storage/display.
+  /// - Translation is optional and typically appears as a trailing token.
+  static ScriptureReferenceMetadata parseReferenceMetadata(String reference) {
+    final ref = reference.trim();
+    if (ref.isEmpty) return const ScriptureReferenceMetadata();
+
+    final tokens = ref.split(RegExp(r'\s+')).where((t) => t.trim().isNotEmpty).toList();
+    if (tokens.isEmpty) return const ScriptureReferenceMetadata();
+
+    String? translation;
+    final last = tokens.last.trim();
+    final lastUpper = last.toUpperCase();
+    if (_knownTranslations.contains(lastUpper)) {
+      translation = lastUpper;
+      tokens.removeLast();
+    }
+
+    final withoutTranslation = tokens.join(' ').trim();
+    if (withoutTranslation.isEmpty) {
+      return ScriptureReferenceMetadata(translation: translation);
+    }
+
+    // Matches:
+    // - "1 Corinthians 13:2-6"
+    // - "Psalm 23"
+    // - "Luke 4:1, 13-14, 18"
+    // We keep book as originally typed (case preserved) and ONLY parse metadata.
+    final re = RegExp(r'^\s*(.+?)\s+(\d+)(?:\s*:\s*([0-9,\-\s]+))?\s*$');
+    final m = re.firstMatch(withoutTranslation);
+    if (m == null) {
+      return ScriptureReferenceMetadata(translation: translation);
+    }
+
+    final bookRaw = (m.group(1) ?? '').trim();
+    final chapter = int.tryParse(m.group(2) ?? '');
+    final versesRaw = (m.group(3) ?? '').trim();
+
+    if (bookRaw.isEmpty || chapter == null) {
+      return ScriptureReferenceMetadata(translation: translation);
+    }
+
+    int? verseStart;
+    int? verseEnd;
+
+    if (versesRaw.isNotEmpty) {
+      // verse_start: first verse number encountered in the string.
+      final firstNumber = RegExp(r'\d+').firstMatch(versesRaw);
+      if (firstNumber != null) verseStart = int.tryParse(firstNumber.group(0) ?? '');
+
+      // IMPORTANT: verse_end should only be populated when the user provided a range
+      // (e.g. "Romans 8:28-30"). For lists without a dash, keep null.
+      final dashMatches = RegExp(r'-\s*(\d+)').allMatches(versesRaw).toList();
+      if (dashMatches.isNotEmpty) {
+        verseEnd = int.tryParse(dashMatches.last.group(1) ?? '');
+      }
+    }
+
+    return ScriptureReferenceMetadata(
+      book: bookRaw,
+      chapter: chapter,
+      verseStart: verseStart,
+      verseEnd: verseEnd,
+      translation: translation,
+    );
+  }
+
   Future<BiblePassage?> fetchPassage({required String reference, String translation = 'web'}) async {
     final trimmed = reference.trim();
     if (trimmed.isEmpty) return null;
@@ -53,6 +136,16 @@ class BibleService {
         .toList();
     return lines.join('\n').trim();
   }
+}
+
+class ScriptureReferenceMetadata {
+  final String? book;
+  final int? chapter;
+  final int? verseStart;
+  final int? verseEnd;
+  final String? translation;
+
+  const ScriptureReferenceMetadata({this.book, this.chapter, this.verseStart, this.verseEnd, this.translation});
 }
 
 class BiblePassage {

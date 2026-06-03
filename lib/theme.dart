@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 class AppSpacing {
   // Spacing values
@@ -333,72 +334,72 @@ ThemeData get darkTheme => ThemeData(
 /// Build text theme using Lora serif for reflective content and Inter for UI
 TextTheme _buildTextTheme(Brightness brightness) {
   return TextTheme(
-    displayLarge: const TextStyle(
+    displayLarge: GoogleFonts.lora(
       fontSize: FontSizes.displayLarge,
       fontWeight: FontWeight.w400,
       letterSpacing: -0.25,
     ),
-    displayMedium: const TextStyle(
+    displayMedium: GoogleFonts.lora(
       fontSize: FontSizes.displayMedium,
       fontWeight: FontWeight.w400,
     ),
-    displaySmall: const TextStyle(
+    displaySmall: GoogleFonts.lora(
       fontSize: FontSizes.displaySmall,
       fontWeight: FontWeight.w400,
     ),
-    headlineLarge: const TextStyle(
+    headlineLarge: GoogleFonts.lora(
       fontSize: FontSizes.headlineLarge,
       fontWeight: FontWeight.w600,
       letterSpacing: -0.5,
     ),
-    headlineMedium: const TextStyle(
+    headlineMedium: GoogleFonts.lora(
       fontSize: FontSizes.headlineMedium,
       fontWeight: FontWeight.w600,
     ),
-    headlineSmall: const TextStyle(
+    headlineSmall: GoogleFonts.lora(
       fontSize: FontSizes.headlineSmall,
       fontWeight: FontWeight.w600,
     ),
-    titleLarge: const TextStyle(
+    titleLarge: GoogleFonts.lora(
       fontSize: FontSizes.titleLarge,
       fontWeight: FontWeight.w600,
     ),
-    titleMedium: const TextStyle(
+    titleMedium: GoogleFonts.inter(
       fontSize: FontSizes.titleMedium,
       fontWeight: FontWeight.w500,
     ),
-    titleSmall: const TextStyle(
+    titleSmall: GoogleFonts.inter(
       fontSize: FontSizes.titleSmall,
       fontWeight: FontWeight.w500,
     ),
-    labelLarge: const TextStyle(
+    labelLarge: GoogleFonts.inter(
       fontSize: FontSizes.labelLarge,
       fontWeight: FontWeight.w500,
       letterSpacing: 0.1,
     ),
-    labelMedium: const TextStyle(
+    labelMedium: GoogleFonts.inter(
       fontSize: FontSizes.labelMedium,
       fontWeight: FontWeight.w500,
       letterSpacing: 0.5,
     ),
-    labelSmall: const TextStyle(
+    labelSmall: GoogleFonts.inter(
       fontSize: FontSizes.labelSmall,
       fontWeight: FontWeight.w500,
       letterSpacing: 0.5,
     ),
-    bodyLarge: const TextStyle(
+    bodyLarge: GoogleFonts.lora(
       fontSize: FontSizes.bodyLarge,
       fontWeight: FontWeight.w400,
       letterSpacing: 0.15,
       height: 1.6,
     ),
-    bodyMedium: const TextStyle(
+    bodyMedium: GoogleFonts.lora(
       fontSize: FontSizes.bodyMedium,
       fontWeight: FontWeight.w400,
       letterSpacing: 0.25,
       height: 1.5,
     ),
-    bodySmall: const TextStyle(
+    bodySmall: GoogleFonts.inter(
       fontSize: FontSizes.bodySmall,
       fontWeight: FontWeight.w400,
       letterSpacing: 0.4,

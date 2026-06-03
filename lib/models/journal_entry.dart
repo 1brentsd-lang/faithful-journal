@@ -16,6 +16,13 @@ class JournalEntry {
   /// For Questions, this may be empty or null.
   final String scriptureReference;
   final String? scriptureText;
+
+  // Scripture metadata (parsed, optional)
+  final String? bookName;
+  final int? chapter;
+  final int? verseStart;
+  final int? verseEnd;
+  final String? translation;
   final JournalEntryType entryType;
   final bool highlighted;
 
@@ -39,6 +46,11 @@ class JournalEntry {
     required this.userId,
     required this.scriptureReference,
     this.scriptureText,
+    this.bookName,
+    this.chapter,
+    this.verseStart,
+    this.verseEnd,
+    this.translation,
     this.entryType = JournalEntryType.soap,
     this.highlighted = false,
     required this.observation,
@@ -54,14 +66,29 @@ class JournalEntry {
 
   factory JournalEntry.fromJson(Map<String, dynamic> json) {
     final type = _parseEntryType(json['entry_type']);
+
+    String firstNonEmpty(List<String> keys) {
+      for (final k in keys) {
+        final v = (json[k] as String?) ?? '';
+        if (v.trim().isNotEmpty) return v;
+      }
+      return '';
+    }
+
     return JournalEntry(
       id: json['id'] as String,
       userId: json['user_id'] as String?,
       scriptureReference: (json['scripture_reference'] as String?) ?? '',
       scriptureText: json['scripture_text'] as String?,
+      bookName: (json['book'] as String?)?.trim().isEmpty == true ? null : (json['book'] as String?),
+      chapter: json['chapter'] is int ? (json['chapter'] as int) : int.tryParse('${json['chapter'] ?? ''}'),
+      verseStart: json['verse_start'] is int ? (json['verse_start'] as int) : int.tryParse('${json['verse_start'] ?? ''}'),
+      verseEnd: json['verse_end'] is int ? (json['verse_end'] as int) : int.tryParse('${json['verse_end'] ?? ''}'),
+      translation: (json['translation'] as String?)?.trim().isEmpty == true ? null : (json['translation'] as String?),
       entryType: type,
       highlighted: (json['highlighted'] as bool?) ?? false,
-      observation: (json['observation'] as String?) ?? '',
+      // Observation mapping: some imported datasets used different column names.
+      observation: firstNonEmpty(['observation', 'observations', 'observation_text', 'o']),
       observationStructured: _parseObservationStructured(json),
       application: (json['application'] as String?) ?? '',
       prayer: (json['prayer'] as String?) ?? '',
@@ -77,7 +104,7 @@ class JournalEntry {
   static ObservationStructured? _parseObservationStructured(Map<String, dynamic> json) {
     // Preferred: JSON blob stored under observation_structured
     final fromStructured = ObservationStructured.fromUnknown(json['observation_structured']);
-    if (fromStructured != null) return fromStructured;
+    if (fromStructured != null && !fromStructured.isEffectivelyEmpty) return fromStructured;
 
     // Backing columns (Supabase schema): before_passage / after_passage / repeated_theme
     // (Author/Audience were removed from the journaling UI.)
@@ -87,12 +114,14 @@ class JournalEntry {
     if (!hasAnyColumn) return null;
 
     String read(String key) => (json[key] as String?)?.trim() ?? '';
-    return ObservationStructured(
+    final parsed = ObservationStructured(
       leadingContext: read('before_passage'),
       followingContext: read('after_passage'),
       standOut: '',
       repeatedIdeas: read('repeated_theme'),
     );
+    if (parsed.isEffectivelyEmpty) return null;
+    return parsed;
   }
 
   static DateTime _parseDateTime(dynamic value) {
@@ -106,6 +135,11 @@ class JournalEntry {
     'user_id': userId,
     'scripture_reference': scriptureReference,
     'scripture_text': scriptureText,
+    'book': bookName,
+    'chapter': chapter,
+    'verse_start': verseStart,
+    'verse_end': verseEnd,
+    'translation': translation,
     'entry_type': _entryTypeToDb(entryType),
     'highlighted': highlighted,
     'observation': observation,
@@ -124,6 +158,11 @@ class JournalEntry {
     String? userId,
     String? scriptureReference,
     String? scriptureText,
+    String? bookName,
+    int? chapter,
+    int? verseStart,
+    int? verseEnd,
+    String? translation,
     JournalEntryType? entryType,
     bool? highlighted,
     String? observation,
@@ -140,6 +179,11 @@ class JournalEntry {
     userId: userId ?? this.userId,
     scriptureReference: scriptureReference ?? this.scriptureReference,
     scriptureText: scriptureText ?? this.scriptureText,
+    bookName: bookName ?? this.bookName,
+    chapter: chapter ?? this.chapter,
+    verseStart: verseStart ?? this.verseStart,
+    verseEnd: verseEnd ?? this.verseEnd,
+    translation: translation ?? this.translation,
     entryType: entryType ?? this.entryType,
     highlighted: highlighted ?? this.highlighted,
     observation: observation ?? this.observation,
@@ -158,14 +202,48 @@ class JournalEntry {
   bool get hasBeginningToUnderstand => (beginningToUnderstand ?? '').trim().isNotEmpty;
 
   String get book {
-    final parts = scriptureReference.split(' ');
+    final stored = bookName?.trim() ?? '';
+    if (stored.isNotEmpty) return stored;
+    return _computeBookFromScriptureReference(scriptureReference);
+  }
+
+  static String _computeBookFromScriptureReference(String scriptureReference) {
+    final parts = scriptureReference.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
     if (parts.isEmpty) return '';
-    
-    final numberMatch = RegExp(r'^\d+').firstMatch(parts[0]);
-    if (numberMatch != null && parts.length > 1) {
-      return '${parts[0]} ${parts[1]}';
-    }
+
+    final numberMatch = RegExp(r'^\d+$').firstMatch(parts[0]);
+    if (numberMatch != null && parts.length > 1) return '${parts[0]} ${parts[1]}';
     return parts[0];
+  }
+
+  /// A lightweight key that approximates "Scripture chapter".
+  ///
+  /// Examples:
+  /// - "Psalm 23:1-3" -> "Psalm 23"
+  /// - "1 John 4:7" -> "1 John 4"
+  /// - "John 3" -> "John 3"
+  ///
+  /// If the chapter cannot be parsed, returns an empty string.
+  String get chapterKey {
+    final b = book.trim();
+    if (b.isEmpty) return '';
+
+    final ch = chapter;
+    if (ch != null) return '$b $ch';
+
+    final ref = scriptureReference.trim();
+    if (ref.isEmpty) return '';
+
+    // Prefer classic chapter:verse formats.
+    final m = RegExp(r'(\d+)(?=\s*:)').firstMatch(ref);
+    if (m != null) return '$b ${m.group(1)}';
+
+    // Fall back: look for a chapter number token right after the book name.
+    final afterBook = ref.replaceFirst(b, '').trimLeft();
+    final m2 = RegExp(r'^(\d+)\b').firstMatch(afterBook);
+    if (m2 != null) return '$b ${m2.group(1)}';
+
+    return '';
   }
 
   String get preview {
@@ -195,10 +273,15 @@ class ObservationStructured {
     if (value is ObservationStructured) return value;
     if (value is Map) {
       final map = value.cast<String, dynamic>();
-      return ObservationStructured.fromJson(map);
+      final parsed = ObservationStructured.fromJson(map);
+      if (parsed.isEffectivelyEmpty) return null;
+      return parsed;
     }
     return null;
   }
+
+  bool get isEffectivelyEmpty =>
+      leadingContext.trim().isEmpty && followingContext.trim().isEmpty && standOut.trim().isEmpty && repeatedIdeas.trim().isEmpty;
 
   factory ObservationStructured.fromJson(Map<String, dynamic> json) => ObservationStructured(
     leadingContext: (json['leading_context'] as String?) ?? '',

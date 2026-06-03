@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:faithful_journal/models/journal_entry.dart';
 import 'package:faithful_journal/services/entry_service.dart';
-import 'package:faithful_journal/widgets/related_entries_list.dart';
+import 'package:faithful_journal/widgets/resurfacing_section.dart';
 import 'package:faithful_journal/theme.dart';
 
 class EntryDetailScreen extends StatelessWidget {
@@ -14,33 +15,64 @@ class EntryDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.edit),
-            onPressed: () {
-              final entry = context.read<EntryService>().getEntryById(entryId);
-              if (entry?.isQuestion == true) {
-                context.push('/questions/edit/$entryId');
-              } else {
-                context.push('/edit-entry/$entryId');
-              }
-            },
+    final scheme = Theme.of(context).colorScheme;
+    // Navigation stability:
+    // The detail screen is a root-level route (over the tab shell). Using
+    // `context.pop()` can return to a now-disposed form route (/new-entry) or
+    // otherwise interact poorly with async refreshes. We always route back to
+    // Archive explicitly.
+    void goBackToArchive() => context.go('/');
+
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) {
+        if (didPop) return;
+        goBackToArchive();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          automaticallyImplyLeading: false,
+          leadingWidth: 96,
+          leading: Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: goBackToArchive,
+                icon: Icon(Icons.arrow_back, size: 18, color: scheme.onSurface),
+                label: Text('Back', style: context.textStyles.labelLarge?.copyWith(color: scheme.onSurface)),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  foregroundColor: scheme.onSurface,
+                ),
+              ),
+            ),
           ),
-          IconButton(
-            icon: const Icon(Icons.delete),
-            onPressed: () => _confirmDelete(context),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Consumer<EntryService>(
-          builder: (context, entryService, _) {
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.edit),
+              onPressed: () {
+                final entry = context.read<EntryService>().getEntryById(entryId);
+                if (entry?.isQuestion == true) {
+                  context.push('/questions/edit/$entryId');
+                } else {
+                  context.push('/edit-entry/$entryId');
+                }
+              },
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete),
+              onPressed: () => _confirmDelete(context),
+            ),
+          ],
+        ),
+        body: SafeArea(
+          child: Consumer<EntryService>(
+            builder: (context, entryService, _) {
             final entry = entryService.getEntryById(entryId);
 
             if (entry == null) {
-              return Center(
+                return Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -49,7 +81,7 @@ class EntryDetailScreen extends StatelessWidget {
                     const Text('Entry not found'),
                     const SizedBox(height: AppSpacing.lg),
                     ElevatedButton(
-                      onPressed: () => context.go('/'),
+                        onPressed: goBackToArchive,
                       child: const Text('Go Home'),
                     ),
                   ],
@@ -57,10 +89,7 @@ class EntryDetailScreen extends StatelessWidget {
               );
             }
 
-            final relatedByTopic = entry.topic.trim().isEmpty
-                ? <JournalEntry>[]
-                : entryService.getRelatedByTopic(entryId, entry.topic);
-            final relatedByBook = entryService.getRelatedByBook(entryId, entry.book);
+            final resurfacing = entryService.getResurfacingForEntry(entryId, maxItems: 5);
             final dateFormat = DateFormat('EEEE, MMMM d, yyyy');
 
             return SingleChildScrollView(
@@ -193,23 +222,18 @@ class EntryDetailScreen extends StatelessWidget {
                     Text(entry.prayer, style: context.textStyles.bodyLarge),
                   ],
                   const SizedBox(height: AppSpacing.xxl),
-                  if (relatedByTopic.isNotEmpty) ...[
-                    RelatedEntriesList(
-                      title: 'More on ${entry.topic}',
-                      entries: relatedByTopic,
-                    ),
-                    const SizedBox(height: AppSpacing.xl),
-                  ],
-                  if (relatedByBook.isNotEmpty) ...[
-                    RelatedEntriesList(
-                      title: 'More from ${entry.book}',
-                      entries: relatedByBook,
-                    ),
-                  ],
+                  ResurfacingSection(
+                    title: 'Remembering',
+                    subtitle: entry.chapterKey.trim().isEmpty
+                        ? 'A few quiet memories to revisit.'
+                        : 'From ${entry.chapterKey.trim()}',
+                    items: resurfacing,
+                  ),
                 ],
               ),
             );
-          },
+            },
+          ),
         ),
       ),
     );
@@ -263,18 +287,37 @@ class EntryDetailScreen extends StatelessWidget {
       ),
     );
 
-    if (confirmed == true && context.mounted) {
+    if (confirmed != true || !context.mounted) return;
+
+    try {
       await context.read<EntryService>().deleteEntry(entryId);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Entry deleted'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-        context.go('/');
-      }
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not delete entry. Please try again.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
     }
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Entry deleted'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+
+    // Navigation safety:
+    // When a root-level route (EntryDetail) is popped/replaced while overlays
+    // are still animating, Flutter web can hit framework assertions.
+    // Scheduling the navigation to the next frame prevents that.
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!context.mounted) return;
+      GoRouter.of(context).go('/');
+    });
   }
 }
 
@@ -325,7 +368,11 @@ class ObservationBody extends StatelessWidget {
       if (s.followingContext.trim().isNotEmpty) paragraphs.add(_sentence(s.followingContext, prefix: 'Following this section,'));
       if (s.standOut.trim().isNotEmpty) paragraphs.add(_sentence(s.standOut, prefix: 'What stands out most is'));
       if (s.repeatedIdeas.trim().isNotEmpty) paragraphs.add(_sentence(s.repeatedIdeas, prefix: 'Repeated ideas include'));
-    } else if (entry.observation.trim().isNotEmpty) {
+    }
+
+    // Fallback: if the structured blob exists but is empty (common in imports),
+    // still show the plain observation field.
+    if (paragraphs.isEmpty && entry.observation.trim().isNotEmpty) {
       paragraphs.add(entry.observation.trim());
     }
 

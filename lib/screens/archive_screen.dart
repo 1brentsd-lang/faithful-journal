@@ -19,7 +19,7 @@ enum _ArchiveKind { all, reflections, questions }
 
 class _ArchiveScreenState extends State<ArchiveScreen> {
   String? _selectedTopic;
-  String? _selectedBook;
+  String? _selectedFromChapter;
   _ArchiveKind _kind = _ArchiveKind.all;
   QuestionFilter _questionFilter = QuestionFilter.all;
 
@@ -33,9 +33,12 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
         child: Consumer<EntryService>(
           builder: (context, entryService, _) {
             final allTopics = entryService.getAllTopics();
-            final allBooks = entryService.getAllBooks();
+            final allChapters = entryService.getAllChapterKeys();
             
-            List<JournalEntry> filteredEntries = entryService.entries;
+            // NOTE: `entryService.entries` may be backed by an unmodifiable list
+            // (e.g. from a DB/stream layer). We will sort later, so start with a
+            // growable copy to avoid: `Unsupported operation: sort`.
+            List<JournalEntry> filteredEntries = List<JournalEntry>.from(entryService.entries);
 
             if (_kind == _ArchiveKind.reflections) {
               filteredEntries = filteredEntries.where((e) => e.entryType == JournalEntryType.soap).toList();
@@ -48,17 +51,17 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
               }
             }
             
-            if (_kind != _ArchiveKind.questions && _selectedTopic != null) {
-              filteredEntries = filteredEntries
-                  .where((e) => e.topic == _selectedTopic)
-                  .toList();
+            if (_selectedTopic != null) {
+              filteredEntries = filteredEntries.where((e) => e.topic == _selectedTopic).toList();
             }
-            
-            if (_kind != _ArchiveKind.questions && _selectedBook != null) {
-              filteredEntries = filteredEntries
-                  .where((e) => e.book == _selectedBook)
-                  .toList();
+
+            if (_selectedFromChapter != null) {
+              filteredEntries = filteredEntries.where((e) => e.chapterKey == _selectedFromChapter).toList();
             }
+
+            // Archive ordering: newest first.
+            // (Safe because `filteredEntries` is always a growable list.)
+            filteredEntries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
             return Column(
               children: [
@@ -120,7 +123,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                             ),
                           ),
                         ],
-                        if (_kind != _ArchiveKind.questions && (allTopics.isNotEmpty || allBooks.isNotEmpty)) ...[
+                        if (allTopics.isNotEmpty || allChapters.isNotEmpty) ...[
                           const SizedBox(height: AppSpacing.md),
                           if (allTopics.isNotEmpty) ...[
                             Text(
@@ -154,10 +157,10 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                               ),
                             ),
                           ],
-                          if (allBooks.isNotEmpty) ...[
+                          if (allChapters.isNotEmpty) ...[
                             const SizedBox(height: AppSpacing.md),
                             Text(
-                              'Filter by Book',
+                              'From Book & Chapter',
                               style: context.textStyles.labelMedium?.copyWith(
                                 color: Theme.of(context).colorScheme.onSurfaceVariant,
                               ),
@@ -168,18 +171,18 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                               child: Row(
                                 children: [
                                   AppFilterChip(
-                                    label: 'All Books',
-                                    isSelected: _selectedBook == null,
-                                    onSelected: (_) => setState(() => _selectedBook = null),
+                                    label: 'All',
+                                    isSelected: _selectedFromChapter == null,
+                                    onSelected: (_) => setState(() => _selectedFromChapter = null),
                                   ),
                                   const SizedBox(width: AppSpacing.sm),
-                                  ...allBooks.map(
-                                    (book) => Padding(
+                                  ...allChapters.map(
+                                    (chapterKey) => Padding(
                                       padding: const EdgeInsets.only(right: AppSpacing.sm),
                                       child: AppFilterChip(
-                                        label: book,
-                                        isSelected: _selectedBook == book,
-                                        onSelected: (_) => setState(() => _selectedBook = book),
+                                        label: chapterKey,
+                                        isSelected: _selectedFromChapter == chapterKey,
+                                        onSelected: (_) => setState(() => _selectedFromChapter = chapterKey),
                                       ),
                                     ),
                                   ),

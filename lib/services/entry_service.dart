@@ -3,12 +3,14 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:faithful_journal/models/journal_entry.dart';
+import 'package:faithful_journal/services/bible_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 enum QuestionFilter { all, stillWrestling, developingUnderstanding }
 
 class EntryService extends ChangeNotifier {
   static const String _entriesKey = 'journal_entries';
+  static const String _scriptureBackfillV2Key = 'scripture_metadata_backfill_v2_done';
   /// Temporary testing-mode owner id when no Supabase session exists.
   ///
   /// This keeps the existing schema intact (`user_id` is NOT NULL), while
@@ -56,16 +58,105 @@ class EntryService extends ChangeNotifier {
         _useSupabase = true;
         await _ensureSignedIn();
         await _loadEntriesFromSupabase();
+        await _backfillScriptureMetadataIfNeeded();
       } else {
         _useSupabase = false;
         await _loadEntriesFromLocal();
+        await _backfillScriptureMetadataIfNeeded();
       }
     } catch (e) {
       debugPrint('Failed to load entries: $e');
       await _loadEntriesFromLocal();
+      await _backfillScriptureMetadataIfNeeded();
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> _backfillScriptureMetadataIfNeeded() async {
+    // One-time backfill to correct previously imported/parsed entries,
+    // especially numbered books ("1 Corinthians", "2 Timothy", etc.).
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final already = prefs.getBool(_scriptureBackfillV2Key) ?? false;
+      if (already) return;
+
+      var changedCount = 0;
+      final updatedEntries = <JournalEntry>[];
+      final updatesById = <String, ScriptureReferenceMetadata>{};
+
+      for (final e in _entries) {
+        final meta = BibleService.parseReferenceMetadata(e.scriptureReference);
+
+        // If we can't parse anything meaningful, skip.
+        final hasAny = (meta.book?.trim().isNotEmpty ?? false) || meta.chapter != null || meta.translation != null;
+        if (!hasAny) {
+          updatedEntries.add(e);
+          continue;
+        }
+
+        bool differs(String? a, String? b) => (a ?? '').trim() != (b ?? '').trim();
+        bool needsUpdate = false;
+
+        if (differs(e.bookName, meta.book)) needsUpdate = true;
+        if (e.chapter != meta.chapter) needsUpdate = true;
+        if (e.verseStart != meta.verseStart) needsUpdate = true;
+        if (e.verseEnd != meta.verseEnd) needsUpdate = true;
+        if (differs(e.translation, meta.translation)) needsUpdate = true;
+
+        if (!needsUpdate) {
+          updatedEntries.add(e);
+          continue;
+        }
+
+        changedCount += 1;
+        updatesById[e.id] = meta;
+        updatedEntries.add(
+          e.copyWith(
+            bookName: (meta.book?.trim().isEmpty ?? true) ? null : meta.book?.trim(),
+            chapter: meta.chapter,
+            verseStart: meta.verseStart,
+            verseEnd: meta.verseEnd,
+            translation: (meta.translation?.trim().isEmpty ?? true) ? null : meta.translation?.trim(),
+          ),
+        );
+      }
+
+      if (changedCount == 0) {
+        await prefs.setBool(_scriptureBackfillV2Key, true);
+        return;
+      }
+
+      _entries = updatedEntries;
+      notifyListeners();
+
+      if (_useSupabase && _supabase != null) {
+        // Update only the metadata columns; do NOT touch scripture_reference.
+        // We avoid updating updated_at here to prevent noisy "edit" signals.
+        for (final entryId in updatesById.keys) {
+          final meta = updatesById[entryId]!;
+          final updateMap = <String, dynamic>{
+            'book': meta.book,
+            'chapter': meta.chapter,
+            'verse_start': meta.verseStart,
+            'verse_end': meta.verseEnd,
+            'translation': meta.translation,
+          };
+          try {
+            await _updateJournalEntryWithSchemaFallback(entryId, updateMap);
+          } catch (err) {
+            debugPrint('Scripture metadata backfill update failed for entry=$entryId: $err');
+          }
+        }
+      } else {
+        await _saveEntries();
+      }
+
+      await prefs.setBool(_scriptureBackfillV2Key, true);
+      debugPrint('Scripture metadata backfill v2 completed. Updated $changedCount entries.');
+    } catch (e) {
+      debugPrint('Scripture metadata backfill v2 failed: $e');
     }
   }
 
@@ -254,6 +345,7 @@ class EntryService extends ChangeNotifier {
         final ownerId = _supabase!.auth.currentUser?.id ?? publicTestUserId;
 
         final s = entry.observationStructured;
+        final meta = _effectiveScriptureMetadata(entry);
         final insertMap = <String, dynamic>{
           'id': entry.id,
           'user_id': ownerId,
@@ -261,6 +353,11 @@ class EntryService extends ChangeNotifier {
           'highlighted': entry.highlighted,
           'scripture_reference': entry.scriptureReference,
           'scripture_text': entry.scriptureText,
+          'book': meta.book,
+          'chapter': meta.chapter,
+          'verse_start': meta.verseStart,
+          'verse_end': meta.verseEnd,
+          'translation': meta.translation,
           'observation': entry.observation,
           'application': entry.application,
           'prayer': entry.prayer,
@@ -277,11 +374,7 @@ class EntryService extends ChangeNotifier {
         debugPrint('createEntry(): Inserting into journal_entries. keys=${insertMap.keys.toList()}');
 
         // Select the inserted row to get the DB-generated id and timestamps.
-        final row = await _supabase!
-            .from('journal_entries')
-            .insert(insertMap)
-            .select()
-            .single();
+        final row = await _insertJournalEntryWithSchemaFallback(insertMap);
         debugPrint('createEntry(): Insert success. Returned row id=${row['id']}');
         final created = JournalEntry.fromJson(row);
         _entries.insert(0, created);
@@ -312,11 +405,17 @@ class EntryService extends ChangeNotifier {
         try {
           await _ensureSignedIn();
           final s = entry.observationStructured;
+          final meta = _effectiveScriptureMetadata(entry);
           final updateMap = {
               'entry_type': entry.entryType == JournalEntryType.question ? 'question' : 'soap',
               'highlighted': entry.highlighted,
             'scripture_reference': entry.scriptureReference,
             'scripture_text': entry.scriptureText,
+              'book': meta.book,
+              'chapter': meta.chapter,
+              'verse_start': meta.verseStart,
+              'verse_end': meta.verseEnd,
+              'translation': meta.translation,
             'observation': entry.observation,
             'application': entry.application,
             'prayer': entry.prayer,
@@ -327,10 +426,7 @@ class EntryService extends ChangeNotifier {
             'after_passage': s?.followingContext,
             'updated_at': entry.updatedAt.toIso8601String(),
           };
-          await _supabase!
-              .from('journal_entries')
-              .update(updateMap)
-              .eq('id', entry.id);
+          await _updateJournalEntryWithSchemaFallback(entry.id, updateMap);
           notifyListeners();
           return;
         } catch (e) {
@@ -344,18 +440,26 @@ class EntryService extends ChangeNotifier {
   }
 
   Future<void> deleteEntry(String id) async {
-    _entries.removeWhere((e) => e.id == id);
+    // Delete should be atomic from the UI's perspective:
+    // - If Supabase delete fails, do NOT remove locally.
+    // - Only remove locally after the backend call succeeds.
+    final existingIndex = _entries.indexWhere((e) => e.id == id);
+
     if (_useSupabase && _supabase != null) {
       try {
         await _ensureSignedIn();
         await _supabase!.from('journal_entries').delete().eq('id', id);
+        if (existingIndex != -1) _entries.removeAt(existingIndex);
         notifyListeners();
         return;
       } catch (e) {
         debugPrint('Supabase deleteEntry failed: $e');
+        // Keep local state intact on failure.
         rethrow;
       }
     }
+
+    if (existingIndex != -1) _entries.removeAt(existingIndex);
     await _saveEntries();
     notifyListeners();
   }
@@ -430,6 +534,68 @@ class EntryService extends ChangeNotifier {
         .toList();
   }
 
+  /// Returns a quiet, archival "resurfacing" list of entries that feel like
+  /// "you've been here before".
+  ///
+  /// Matching (ONLY):
+  /// - Same book
+  /// - Same chapter
+  ///
+  /// Ordering:
+  /// 1) Highlighted first
+  /// 2) Then remaining
+  ///
+  /// Within each group, items are chronological (oldest -> newest).
+  List<JournalEntry> getResurfacingForEntry(String entryId, {int maxItems = 5}) {
+    final seed = getEntryById(entryId);
+    if (seed == null) return const [];
+
+    int? parseChapterFromKey(String key) {
+      final m = RegExp(r'\b(\d+)\b').firstMatch(key);
+      if (m == null) return null;
+      return int.tryParse(m.group(1)!);
+    }
+
+    final seedBook = seed.book.trim().toLowerCase();
+    final seedChapter = seed.chapter ?? parseChapterFromKey(seed.chapterKey);
+
+    String normalizeChapterKey(String key) => key.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+    final seedKey = normalizeChapterKey(seed.chapterKey);
+
+    final matches = <JournalEntry>[];
+    final seen = <String>{};
+
+    void addAll(Iterable<JournalEntry> items) {
+      for (final e in items) {
+        if (e.id == entryId) continue;
+        if (seen.add(e.id)) matches.add(e);
+      }
+    }
+
+    bool sameBookChapter(JournalEntry e) {
+      if (seedBook.isEmpty || seedChapter == null) return false;
+      final b = e.book.trim().toLowerCase();
+      final ch = e.chapter ?? parseChapterFromKey(e.chapterKey);
+      if (b.isNotEmpty && ch != null && b == seedBook && ch == seedChapter) return true;
+      if (seedKey.isEmpty) return false;
+      final eKey = normalizeChapterKey(e.chapterKey);
+      return eKey.isNotEmpty && eKey == seedKey;
+    }
+
+    addAll(_entries.where(sameBookChapter));
+
+    final filtered = matches.where(sameBookChapter).toList();
+
+    int byCreatedAtAsc(JournalEntry a, JournalEntry b) => a.createdAt.compareTo(b.createdAt);
+
+    final highlighted = filtered.where((e) => e.highlighted).toList()..sort(byCreatedAtAsc);
+    final remaining = filtered.where((e) => !e.highlighted).toList()..sort(byCreatedAtAsc);
+
+    final ordered = [...highlighted, ...remaining];
+    if (ordered.length <= maxItems) return ordered;
+    return ordered.take(maxItems).toList();
+  }
+
   List<String> getAllTopics() {
     final topics = _entries.map((e) => e.topic).toSet().toList();
     topics.sort();
@@ -442,5 +608,97 @@ class EntryService extends ChangeNotifier {
     return books;
   }
 
+  /// Returns unique [JournalEntry.chapterKey] values (e.g. "John 3").
+  ///
+  /// Empty / unparseable chapter keys are excluded.
+  List<String> getAllChapterKeys() {
+    final keys = _entries.map((e) => e.chapterKey.trim()).where((k) => k.isNotEmpty).toSet().toList();
+    keys.sort((a, b) {
+      // Sort by book then numeric chapter when possible.
+      final aBook = a.replaceAll(RegExp(r'\s+\d+\b.*$'), '').trim();
+      final bBook = b.replaceAll(RegExp(r'\s+\d+\b.*$'), '').trim();
+      final bookCmp = aBook.toLowerCase().compareTo(bBook.toLowerCase());
+      if (bookCmp != 0) return bookCmp;
+
+      int? parseChapter(String v) {
+        final m = RegExp(r'(\d+)\b').firstMatch(v);
+        if (m == null) return null;
+        return int.tryParse(m.group(1)!);
+      }
+
+      final aCh = parseChapter(a);
+      final bCh = parseChapter(b);
+      if (aCh != null && bCh != null) return aCh.compareTo(bCh);
+      if (aCh != null) return -1;
+      if (bCh != null) return 1;
+      return a.toLowerCase().compareTo(b.toLowerCase());
+    });
+    return keys;
+  }
+
   String generateId() => _uuid.v4();
+
+  ScriptureReferenceMetadata _effectiveScriptureMetadata(JournalEntry entry) {
+    // Prefer already-parsed fields on the model.
+    final hasAny = (entry.bookName?.trim().isNotEmpty ?? false) || entry.chapter != null || entry.translation != null;
+    if (hasAny) {
+      return ScriptureReferenceMetadata(
+        book: (entry.bookName?.trim().isEmpty ?? true) ? null : entry.bookName?.trim(),
+        chapter: entry.chapter,
+        verseStart: entry.verseStart,
+        verseEnd: entry.verseEnd,
+        translation: (entry.translation?.trim().isEmpty ?? true) ? null : entry.translation?.trim(),
+      );
+    }
+
+    // Fall back to parsing the free-form string.
+    return BibleService.parseReferenceMetadata(entry.scriptureReference);
+  }
+
+  Future<Map<String, dynamic>> _insertJournalEntryWithSchemaFallback(Map<String, dynamic> insertMap) async {
+    if (_supabase == null) throw StateError('Supabase not initialized');
+    try {
+      return await _supabase!.from('journal_entries').insert(insertMap).select().single();
+    } catch (e) {
+      if (e is PostgrestException) {
+        final msg = e.message.toLowerCase();
+        final looksLikeMissingColumn = msg.contains('column') && (msg.contains('book') || msg.contains('chapter') || msg.contains('verse') || msg.contains('translation'));
+        if (looksLikeMissingColumn) {
+          debugPrint('Supabase schema is missing scripture metadata columns. Retrying insert without metadata. Error: ${e.message}');
+          final stripped = Map<String, dynamic>.from(insertMap)
+            ..remove('book')
+            ..remove('chapter')
+            ..remove('verse_start')
+            ..remove('verse_end')
+            ..remove('translation');
+          return await _supabase!.from('journal_entries').insert(stripped).select().single();
+        }
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> _updateJournalEntryWithSchemaFallback(String entryId, Map<String, dynamic> updateMap) async {
+    if (_supabase == null) throw StateError('Supabase not initialized');
+    try {
+      await _supabase!.from('journal_entries').update(updateMap).eq('id', entryId);
+    } catch (e) {
+      if (e is PostgrestException) {
+        final msg = e.message.toLowerCase();
+        final looksLikeMissingColumn = msg.contains('column') && (msg.contains('book') || msg.contains('chapter') || msg.contains('verse') || msg.contains('translation'));
+        if (looksLikeMissingColumn) {
+          debugPrint('Supabase schema is missing scripture metadata columns. Retrying update without metadata. Error: ${e.message}');
+          final stripped = Map<String, dynamic>.from(updateMap)
+            ..remove('book')
+            ..remove('chapter')
+            ..remove('verse_start')
+            ..remove('verse_end')
+            ..remove('translation');
+          await _supabase!.from('journal_entries').update(stripped).eq('id', entryId);
+          return;
+        }
+      }
+      rethrow;
+    }
+  }
 }

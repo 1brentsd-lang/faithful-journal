@@ -45,7 +45,7 @@ class HomePage extends StatelessWidget {
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
-                            onPressed: () => context.push('/new-entry'),
+                            onPressed: () => context.go('/new-entry'),
                             icon: Icon(Icons.add, color: Theme.of(context).colorScheme.onPrimary),
                             label: const Text('New Entry'),
                           ),
@@ -55,7 +55,7 @@ class HomePage extends StatelessWidget {
                           children: [
                             Expanded(
                               child: FilledButton.icon(
-                                onPressed: () => context.push('/questions'),
+                                onPressed: () => context.go('/questions'),
                                 icon: Icon(Icons.help_outline, color: Theme.of(context).colorScheme.onPrimary),
                                 label: const Text('Questions'),
                               ),
@@ -63,7 +63,7 @@ class HomePage extends StatelessWidget {
                             const SizedBox(width: AppSpacing.md),
                             Expanded(
                               child: OutlinedButton.icon(
-                                onPressed: () => context.push('/archive'),
+                                onPressed: () => context.go('/archive'),
                                 icon: Icon(Icons.library_books, color: Theme.of(context).colorScheme.primary),
                                 label: const Text('Archive'),
                               ),

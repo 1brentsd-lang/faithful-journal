@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:faithful_journal/models/journal_entry.dart';
 import 'package:faithful_journal/services/bible_service.dart';
 import 'package:faithful_journal/services/entry_service.dart';
+import 'package:faithful_journal/services/unsaved_changes_service.dart';
 import 'package:faithful_journal/nav.dart';
 import 'package:faithful_journal/theme.dart';
+import 'package:faithful_journal/widgets/app_journal_text_field.dart';
+import 'package:faithful_journal/widgets/discard_changes_dialog.dart';
 
 class NewEntryScreen extends StatefulWidget {
   final String? entryId;
@@ -17,6 +21,8 @@ class NewEntryScreen extends StatefulWidget {
 }
 
 class _NewEntryScreenState extends State<NewEntryScreen> {
+  static const _unsavedKey = 'new_entry';
+
   final _formKey = GlobalKey<FormState>();
   final _scriptureController = TextEditingController();
   final _scriptureTextController = TextEditingController();
@@ -27,6 +33,9 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
   final _prayerController = TextEditingController();
   final _topicController = TextEditingController();
 
+  bool _isDirty = false;
+  bool _suspendDirty = false;
+
   bool _highlighted = false;
 
   final _bibleService = BibleService();
@@ -36,12 +45,43 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
   bool _isEditing = false;
   JournalEntry? _existingEntry;
 
+  UnsavedChangesService? _unsavedChanges;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _unsavedChanges ??= context.read<UnsavedChangesService>();
+  }
+
   @override
   void initState() {
     super.initState();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      (_unsavedChanges ?? context.read<UnsavedChangesService>()).claim(_unsavedKey);
+    });
+
+    _scriptureTextController.addListener(_markDirty);
+    _scriptureController.addListener(_markDirty);
+    _observationController.addListener(_markDirty);
+    _obsBeforeController.addListener(_markDirty);
+    _obsAfterController.addListener(_markDirty);
+    _applicationController.addListener(_markDirty);
+    _prayerController.addListener(_markDirty);
+    _topicController.addListener(_markDirty);
+
     if (widget.entryId != null) {
       _loadEntry();
     }
+  }
+
+  void _markDirty() {
+    if (_suspendDirty) return;
+    if (_isDirty) return;
+    _isDirty = true;
+    if (!mounted) return;
+    (_unsavedChanges ?? context.read<UnsavedChangesService>()).markDirty(_unsavedKey);
   }
 
   void _loadEntry() {
@@ -49,8 +89,13 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
     _existingEntry = entryService.getEntryById(widget.entryId!);
     
     if (_existingEntry != null) {
+      _suspendDirty = true;
       _isEditing = true;
       _highlighted = _existingEntry!.highlighted;
+      final t = (_existingEntry!.translation ?? '').trim().toLowerCase();
+      if (t == 'kjv' || t == 'asv' || t == 'web') {
+        _translation = t;
+      }
       _scriptureController.text = _existingEntry!.scriptureReference;
       _scriptureTextController.text = _existingEntry!.scriptureText ?? '';
       _observationController.text = _existingEntry!.observation;
@@ -62,11 +107,16 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
       _applicationController.text = _existingEntry!.application;
       _prayerController.text = _existingEntry!.prayer;
       _topicController.text = _existingEntry!.topic;
+      _suspendDirty = false;
     }
   }
 
   @override
   void dispose() {
+    // If we leave the screen normally (save, discard, or route change), ensure
+    // any pending state is cleared.
+    // Avoid BuildContext lookups during dispose; the element is deactivated.
+    _unsavedChanges?.clear(_unsavedKey);
     _scriptureController.dispose();
     _scriptureTextController.dispose();
     _observationController.dispose();
@@ -76,6 +126,29 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
     _prayerController.dispose();
     _topicController.dispose();
     super.dispose();
+  }
+
+  Future<void> _attemptLeave() async {
+    if (!_isDirty) {
+      if (!mounted) return;
+      if (context.canPop()) {
+        context.pop();
+      } else {
+        context.go(AppRoutes.home);
+      }
+      return;
+    }
+
+    final discard = await showDiscardChangesDialog(context);
+    if (!discard) return;
+    if (!mounted) return;
+    (_unsavedChanges ?? context.read<UnsavedChangesService>()).clear(_unsavedKey);
+    _isDirty = false;
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go(AppRoutes.home);
+    }
   }
 
   ObservationStructured _buildObservationStructured() {
@@ -110,6 +183,7 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
 
       _scriptureController.text = passage.reference;
       _scriptureTextController.text = passage.text;
+      _markDirty();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Imported from ${passage.translationName ?? _translation.toUpperCase()}'),
@@ -129,7 +203,12 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
   Future<void> _saveEntry() async {
     debugPrint('NewEntryScreen: Save button pressed');
     final structured = _buildObservationStructured();
-    if (!_formKey.currentState!.validate()) return;
+
+    // Stability: formState can be null if a save is triggered during a rebuild
+    // or a route transition. Avoid null-assertions to prevent red screens.
+    final formState = _formKey.currentState;
+    if (formState == null) return;
+    if (!formState.validate()) return;
 
     final entryService = context.read<EntryService>();
     try {
@@ -137,11 +216,21 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
       debugPrint('NewEntryScreen: ensureAuthenticated complete. supabaseUserId=${entryService.supabaseUserId}');
       final now = DateTime.now();
 
+      final parsed = BibleService.parseReferenceMetadata(_scriptureController.text.trim());
+      final metaTranslation = (parsed.translation ?? _translation.toUpperCase()).trim();
+
+      late final String savedId;
       if (_isEditing && _existingEntry != null) {
+        savedId = _existingEntry!.id;
         final updatedEntry = _existingEntry!.copyWith(
           entryType: JournalEntryType.soap,
           scriptureReference: _scriptureController.text.trim(),
           scriptureText: _scriptureTextController.text.trim().isEmpty ? null : _scriptureTextController.text.trim(),
+          bookName: parsed.book,
+          chapter: parsed.chapter,
+          verseStart: parsed.verseStart,
+          verseEnd: parsed.verseEnd,
+          translation: metaTranslation.isEmpty ? null : metaTranslation,
           observation: _observationController.text.trim(),
           observationStructured: structured,
           application: _applicationController.text.trim(),
@@ -152,11 +241,17 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
         );
         await entryService.updateEntry(updatedEntry);
       } else {
+        savedId = entryService.generateId();
         final newEntry = JournalEntry(
-          id: entryService.generateId(),
+          id: savedId,
           userId: entryService.currentUserId,
           scriptureReference: _scriptureController.text.trim(),
           scriptureText: _scriptureTextController.text.trim().isEmpty ? null : _scriptureTextController.text.trim(),
+          bookName: parsed.book,
+          chapter: parsed.chapter,
+          verseStart: parsed.verseStart,
+          verseEnd: parsed.verseEnd,
+          translation: metaTranslation.isEmpty ? null : metaTranslation,
           entryType: JournalEntryType.soap,
           observation: _observationController.text.trim(),
           observationStructured: structured,
@@ -171,13 +266,19 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_isEditing ? 'Entry updated' : 'Entry saved'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-        context.go(AppRoutes.home);
+        // Stability-first: keep navigation simple after save.
+        // Going directly to the Entry Detail route from within the tab shell
+        // has been a source of brittle lifecycle timing on web (disposed
+        // widgets + snackbars + route transitions). For export testing we land
+        // back on Archive reliably.
+        (_unsavedChanges ?? context.read<UnsavedChangesService>()).clear(_unsavedKey);
+        _isDirty = false;
+
+        // Use next-frame navigation to avoid overlay/route animation assertions.
+        SchedulerBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          context.go(AppRoutes.home);
+        });
       }
     } catch (e) {
       debugPrint('NewEntryScreen: Save failed: $e');
@@ -194,22 +295,28 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
   @override
   Widget build(BuildContext context) {
     final sectionTint = Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45);
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_isEditing ? 'Edit Entry' : 'New Entry'),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: () => context.pop(),
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (didPop) return;
+        await _attemptLeave();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text(_isEditing ? 'Edit Entry' : 'New Entry'),
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: _attemptLeave,
+          ),
         ),
-      ),
-      body: SafeArea(
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(AppSpacing.lg),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+        body: SafeArea(
+          child: Form(
+            key: _formKey,
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(AppSpacing.lg),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                 Text(
                   'Scripture Reference',
                   style: context.textStyles.titleMedium,
@@ -233,9 +340,16 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                         value: _translation,
                         decoration: const InputDecoration(labelText: 'Translation'),
                         items: const [
-                          DropdownMenuItem(value: 'web', child: Text('WEB (free)')),
+                          DropdownMenuItem(value: 'web', child: Text('WEB')),
+                          DropdownMenuItem(value: 'kjv', child: Text('KJV')),
+                          DropdownMenuItem(value: 'asv', child: Text('ASV')),
                         ],
-                        onChanged: _isImporting ? null : (v) => setState(() => _translation = v ?? 'web'),
+                        onChanged: _isImporting
+                            ? null
+                            : (v) {
+                                setState(() => _translation = v ?? 'web');
+                                _markDirty();
+                              },
                       ),
                     ),
                     const SizedBox(width: AppSpacing.md),
@@ -256,12 +370,13 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                   ],
                 ),
                 const SizedBox(height: AppSpacing.md),
-                TextFormField(
+                AppJournalTextField(
                   controller: _scriptureTextController,
                   decoration: const InputDecoration(
                     labelText: 'Passage',
                     hintText: 'Imported text will appear here…',
                   ),
+                  minLines: 4,
                   maxLines: 6,
                 ),
                 const SizedBox(height: AppSpacing.lg),
@@ -281,23 +396,25 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      TextFormField(
+                      AppJournalTextField(
                         controller: _obsBeforeController,
                         decoration: const InputDecoration(
                           labelText: 'Before Passage',
                           hintText: 'What leads into this?',
                         ),
                         style: context.textStyles.bodyMedium,
+                        minLines: 2,
                         maxLines: 2,
                       ),
                       const SizedBox(height: AppSpacing.md),
-                      TextFormField(
+                      AppJournalTextField(
                         controller: _obsAfterController,
                         decoration: const InputDecoration(
                           labelText: 'After Passage',
                           hintText: 'What follows?',
                         ),
                         style: context.textStyles.bodyMedium,
+                        minLines: 2,
                         maxLines: 2,
                       ),
                       const SizedBox(height: AppSpacing.md),
@@ -312,9 +429,10 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      TextFormField(
+                      AppJournalTextField(
                         controller: _observationController,
                         decoration: const InputDecoration(hintText: 'What do you notice?'),
+                        minLines: 6,
                         maxLines: 8,
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) return 'Please add an observation';
@@ -339,9 +457,10 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      TextFormField(
+                      AppJournalTextField(
                         controller: _applicationController,
                         decoration: const InputDecoration(hintText: 'How might you respond?'),
+                        minLines: 6,
                         maxLines: 8,
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) return 'Please add an application';
@@ -366,9 +485,10 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      TextFormField(
+                      AppJournalTextField(
                         controller: _prayerController,
                         decoration: const InputDecoration(hintText: 'Write your prayer...'),
+                        minLines: 5,
                         maxLines: 6,
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) return 'Please add a prayer';
@@ -395,6 +515,11 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                     children: [
                       TextFormField(
                         controller: _topicController,
+                        textCapitalization: TextCapitalization.words,
+                        autocorrect: true,
+                        enableSuggestions: true,
+                        smartDashesType: SmartDashesType.enabled,
+                        smartQuotesType: SmartQuotesType.enabled,
                         decoration: const InputDecoration(hintText: 'e.g. Faith, Grace, Trust'),
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) return 'Please add a topic';
@@ -413,7 +538,10 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                 const SizedBox(height: AppSpacing.md),
                 _EntryToneToggle(
                   highlighted: _highlighted,
-                  onChanged: (v) => setState(() => _highlighted = v),
+                  onChanged: (v) {
+                    setState(() => _highlighted = v);
+                    _markDirty();
+                  },
                 ),
                 const SizedBox(height: AppSpacing.md),
                 SizedBox(
@@ -423,7 +551,8 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                     child: Text(_isEditing ? 'Update Entry' : 'Save Entry'),
                   ),
                 ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

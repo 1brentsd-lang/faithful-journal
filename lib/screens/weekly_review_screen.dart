@@ -48,7 +48,7 @@ class WeeklyReviewScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: AppSpacing.xl),
                           ElevatedButton.icon(
-                            onPressed: () => context.push('/new-entry'),
+                            onPressed: () => context.go('/new-entry'),
                             icon: Icon(Icons.add, color: Theme.of(context).colorScheme.onPrimary),
                             label: const Text('New Entry'),
                           ),

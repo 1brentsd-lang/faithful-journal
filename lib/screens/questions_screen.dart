@@ -18,13 +18,12 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
   QuestionFilter _filter = QuestionFilter.all;
 
   void _goBack() {
-    // If Questions was opened via a redirect/deep-link, there may be no back
-    // stack entry. In that case, fall back to home.
+    // In tab mode, "back" should feel predictable: return to Home.
     if (context.canPop()) {
       context.pop();
-    } else {
-      context.go('/');
+      return;
     }
+    context.go('/');
   }
 
   @override
