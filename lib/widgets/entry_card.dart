@@ -16,10 +16,6 @@ class EntryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dateFormat = DateFormat('MMM d, yyyy');
-    final isQuestion = entry.isQuestion;
-    final titleText = (entry.scriptureReference.trim().isNotEmpty)
-        ? entry.scriptureReference.trim()
-        : (isQuestion ? 'Question' : '');
     
     return Card(
       margin: const EdgeInsets.only(bottom: AppSpacing.md),
@@ -33,36 +29,30 @@ class EntryCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  if (isQuestion) ...[
-                    Icon(
-                      Icons.help_outline,
-                      size: 18,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                  ],
                   Expanded(
                     child: Text(
-                      titleText,
+                      entry.scriptureReference,
                       style: context.textStyles.titleLarge?.copyWith(
                         color: Theme.of(context).colorScheme.primary,
                       ),
                     ),
                   ),
-                  if (entry.topic.trim().isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.secondaryContainer,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        entry.topic,
-                        style: context.textStyles.labelSmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSecondaryContainer,
-                        ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.secondaryContainer,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      entry.topic,
+                      style: context.textStyles.labelSmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSecondaryContainer,
                       ),
                     ),
+                  ),
                 ],
               ),
               const SizedBox(height: AppSpacing.sm),

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -21,13 +22,15 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
   final _scriptureController = TextEditingController();
   final _scriptureTextController = TextEditingController();
   final _observationController = TextEditingController();
+  final _obsStandOutController = TextEditingController();
   final _obsBeforeController = TextEditingController();
   final _obsAfterController = TextEditingController();
+  final _obsRepeatedController = TextEditingController();
+  final _obsAuthorController = TextEditingController();
+  final _obsAudienceController = TextEditingController();
   final _applicationController = TextEditingController();
   final _prayerController = TextEditingController();
   final _topicController = TextEditingController();
-
-  bool _highlighted = false;
 
   final _bibleService = BibleService();
   bool _isImporting = false;
@@ -50,14 +53,20 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
     
     if (_existingEntry != null) {
       _isEditing = true;
-      _highlighted = _existingEntry!.highlighted;
       _scriptureController.text = _existingEntry!.scriptureReference;
       _scriptureTextController.text = _existingEntry!.scriptureText ?? '';
       _observationController.text = _existingEntry!.observation;
       final structured = _existingEntry!.observationStructured;
       if (structured != null) {
+        _obsStandOutController.text = structured.standOut;
         _obsBeforeController.text = structured.leadingContext;
         _obsAfterController.text = structured.followingContext;
+        _obsRepeatedController.text = structured.repeatedIdeas;
+        _obsAuthorController.text = structured.author;
+        _obsAudienceController.text = structured.audience;
+      } else {
+        // Back-compat: treat legacy observation as the "stands out" answer.
+        _obsStandOutController.text = _existingEntry!.observation;
       }
       _applicationController.text = _existingEntry!.application;
       _prayerController.text = _existingEntry!.prayer;
@@ -70,8 +79,12 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
     _scriptureController.dispose();
     _scriptureTextController.dispose();
     _observationController.dispose();
+    _obsStandOutController.dispose();
     _obsBeforeController.dispose();
     _obsAfterController.dispose();
+    _obsRepeatedController.dispose();
+    _obsAuthorController.dispose();
+    _obsAudienceController.dispose();
     _applicationController.dispose();
     _prayerController.dispose();
     _topicController.dispose();
@@ -83,9 +96,46 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
     return ObservationStructured(
       leadingContext: clean(_obsBeforeController.text),
       followingContext: clean(_obsAfterController.text),
-      standOut: '',
-      repeatedIdeas: '',
+      standOut: clean(_obsStandOutController.text),
+      repeatedIdeas: clean(_obsRepeatedController.text),
+      author: clean(_obsAuthorController.text),
+      audience: clean(_obsAudienceController.text),
     );
+  }
+
+  String _renderObservationBody(ObservationStructured s) {
+    String sentence(String text, {required String prefix}) {
+      final t = text.trim();
+      if (t.isEmpty) return '';
+
+      // If the user already started with a similar phrase, don't double-prefix.
+      final lower = t.toLowerCase();
+      final prefixLower = prefix.toLowerCase();
+      if (lower.startsWith(prefixLower)) return _ensurePeriod(t);
+      return _ensurePeriod('$prefix $t');
+    }
+
+    final parts = <String>[];
+    final leading = sentence(s.leadingContext, prefix: 'Leading into this passage,');
+    final following = sentence(s.followingContext, prefix: 'Following this section,');
+    final standOut = sentence(s.standOut, prefix: 'What stands out most is');
+    final repeated = sentence(s.repeatedIdeas, prefix: 'Repeated ideas include');
+
+    // Order requested: Before -> After -> Stands out -> Repeated theme.
+    if (leading.isNotEmpty) parts.add(leading);
+    if (following.isNotEmpty) parts.add(following);
+    if (standOut.isNotEmpty) parts.add(standOut);
+    if (repeated.isNotEmpty) parts.add(repeated);
+
+    return parts.join('\n\n').trim();
+  }
+
+  String _ensurePeriod(String s) {
+    final t = s.trimRight();
+    if (t.isEmpty) return '';
+    final last = t[t.length - 1];
+    if (last == '.' || last == '!' || last == '?' || last == '…') return t;
+    return '$t.';
   }
 
   Future<void> _importScripture() async {
@@ -129,6 +179,7 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
   Future<void> _saveEntry() async {
     debugPrint('NewEntryScreen: Save button pressed');
     final structured = _buildObservationStructured();
+    _observationController.text = _renderObservationBody(structured);
     if (!_formKey.currentState!.validate()) return;
 
     final entryService = context.read<EntryService>();
@@ -139,7 +190,6 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
 
       if (_isEditing && _existingEntry != null) {
         final updatedEntry = _existingEntry!.copyWith(
-          entryType: JournalEntryType.soap,
           scriptureReference: _scriptureController.text.trim(),
           scriptureText: _scriptureTextController.text.trim().isEmpty ? null : _scriptureTextController.text.trim(),
           observation: _observationController.text.trim(),
@@ -147,7 +197,6 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
           application: _applicationController.text.trim(),
           prayer: _prayerController.text.trim(),
           topic: _topicController.text.trim(),
-          highlighted: _highlighted,
           updatedAt: now,
         );
         await entryService.updateEntry(updatedEntry);
@@ -157,13 +206,11 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
           userId: entryService.currentUserId,
           scriptureReference: _scriptureController.text.trim(),
           scriptureText: _scriptureTextController.text.trim().isEmpty ? null : _scriptureTextController.text.trim(),
-          entryType: JournalEntryType.soap,
           observation: _observationController.text.trim(),
           observationStructured: structured,
           application: _applicationController.text.trim(),
           prayer: _prayerController.text.trim(),
           topic: _topicController.text.trim(),
-          highlighted: _highlighted,
           createdAt: now,
           updatedAt: now,
         );
@@ -193,7 +240,6 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final sectionTint = Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45);
     return Scaffold(
       appBar: AppBar(
         title: Text(_isEditing ? 'Edit Entry' : 'New Entry'),
@@ -259,163 +305,193 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                 TextFormField(
                   controller: _scriptureTextController,
                   decoration: const InputDecoration(
-                    labelText: 'Passage',
+                    labelText: 'Passage (optional)',
                     hintText: 'Imported text will appear here…',
                   ),
                   maxLines: 6,
                 ),
                 const SizedBox(height: AppSpacing.lg),
                 Text(
-                  'Context',
-                  style: context.textStyles.labelLarge?.copyWith(
+                  'Observation',
+                  style: context.textStyles.titleMedium,
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'Answer a few prompts — we’ll format this into one Observation.',
+                  style: context.textStyles.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
-                Container(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-                    borderRadius: BorderRadius.circular(AppRadius.lg),
+                TextFormField(
+                  controller: _obsBeforeController,
+                  decoration: const InputDecoration(
+                    labelText: 'What is happening before this passage?',
+                    hintText: 'Short summary…',
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      TextFormField(
-                        controller: _obsBeforeController,
-                        decoration: const InputDecoration(
-                          labelText: 'Before Passage',
-                          hintText: 'What leads into this?',
-                        ),
-                        style: context.textStyles.bodyMedium,
-                        maxLines: 2,
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      TextFormField(
-                        controller: _obsAfterController,
-                        decoration: const InputDecoration(
-                          labelText: 'After Passage',
-                          hintText: 'What follows?',
-                        ),
-                        style: context.textStyles.bodyMedium,
-                        maxLines: 2,
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      // Author/Audience removed to keep the observation flow quieter.
-                    ],
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                EntrySectionCard(
-                  title: 'Observation',
-                  tint: sectionTint,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      TextFormField(
-                        controller: _observationController,
-                        decoration: const InputDecoration(hintText: 'What do you notice?'),
-                        maxLines: 8,
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) return 'Please add an observation';
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      const _QuietPrompts(
-                        prompts: [
-                          'What is being emphasized?',
-                          'What might be misunderstood?',
-                          'What detail is easy to miss?',
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                EntrySectionCard(
-                  title: 'Application',
-                  tint: sectionTint,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      TextFormField(
-                        controller: _applicationController,
-                        decoration: const InputDecoration(hintText: 'How might you respond?'),
-                        maxLines: 8,
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) return 'Please add an application';
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      const _QuietPrompts(
-                        prompts: [
-                          'What is this calling me toward?',
-                          'Where do I feel challenged?',
-                          'What is one small act of obedience?',
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                EntrySectionCard(
-                  title: 'Prayer',
-                  tint: sectionTint,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      TextFormField(
-                        controller: _prayerController,
-                        decoration: const InputDecoration(hintText: 'Write your prayer...'),
-                        maxLines: 6,
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) return 'Please add a prayer';
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      const _QuietPrompts(
-                        prompts: [
-                          'What do I want to thank God for?',
-                          'What do I need help surrendering?',
-                          'What truth do I need help believing?',
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                EntrySectionCard(
-                  title: 'Topic',
-                  tint: sectionTint,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      TextFormField(
-                        controller: _topicController,
-                        decoration: const InputDecoration(hintText: 'e.g. Faith, Grace, Trust'),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) return 'Please add a topic';
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      const _QuietPrompts(
-                        prompts: [
-                          'What theme keeps surfacing here?',
-                        ],
-                      ),
-                    ],
-                  ),
+                  maxLines: 2,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Please add a short “before” summary';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: AppSpacing.md),
-                _EntryToneToggle(
-                  highlighted: _highlighted,
-                  onChanged: (v) => setState(() => _highlighted = v),
+                TextFormField(
+                  controller: _obsAfterController,
+                  decoration: const InputDecoration(
+                    labelText: 'What is happening after this passage?',
+                    hintText: 'Short summary…',
+                  ),
+                  maxLines: 2,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Please add a short “after” summary';
+                    }
+                    return null;
+                  },
                 ),
                 const SizedBox(height: AppSpacing.md),
+                TextFormField(
+                  controller: _obsStandOutController,
+                  decoration: const InputDecoration(
+                    labelText: 'What stands out in this passage?',
+                    hintText: 'Free text…',
+                  ),
+                  maxLines: 4,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Please answer: What stands out?';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: AppSpacing.md),
+                TextFormField(
+                  controller: _obsRepeatedController,
+                  decoration: const InputDecoration(
+                    labelText: 'Is there a repeated word, idea, or theme? (optional)',
+                    hintText: 'Optional…',
+                  ),
+                  maxLines: 2,
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Text(
+                  'Optional metadata (subtle)',
+                  style: context.textStyles.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: _obsAuthorController,
+                        decoration: const InputDecoration(labelText: 'Author (optional)'),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.md),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _obsAudienceController,
+                        decoration: const InputDecoration(labelText: 'Audience (optional)'),
+                      ),
+                    ),
+                  ],
+                ),
+                // Hidden field: holds the composed Observation for form validation + saving.
+                Offstage(
+                  offstage: true,
+                  child: TextFormField(
+                    controller: _observationController,
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Please add your observations';
+                      }
+                      return null;
+                    },
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Text(
+                  'Application',
+                  style: context.textStyles.titleMedium,
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'How will you apply this to your life?',
+                  style: context.textStyles.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _applicationController,
+                  decoration: const InputDecoration(
+                    hintText: 'Write how you will apply this...',
+                  ),
+                  maxLines: 4,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Please add an application';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Text(
+                  'Prayer',
+                  style: context.textStyles.titleMedium,
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'Respond to God in prayer',
+                  style: context.textStyles.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _prayerController,
+                  decoration: const InputDecoration(
+                    hintText: 'Write your prayer...',
+                  ),
+                  maxLines: 4,
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Please add a prayer';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Text(
+                  'Topic',
+                  style: context.textStyles.titleMedium,
+                ),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'One word theme for this reflection',
+                  style: context.textStyles.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _topicController,
+                  decoration: const InputDecoration(
+                    hintText: 'e.g. Faith, Grace, Trust',
+                  ),
+                  validator: (value) {
+                    if (value == null || value.trim().isEmpty) {
+                      return 'Please add a topic';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: AppSpacing.xl),
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
@@ -427,125 +503,6 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class EntrySectionCard extends StatelessWidget {
-  final String title;
-  final String? subtitle;
-  final Widget child;
-  final Color tint;
-
-  const EntrySectionCard({
-    super.key,
-    required this.title,
-    required this.child,
-    required this.tint,
-    this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: tint,
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: context.textStyles.titleMedium),
-          if (subtitle != null) ...[
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              subtitle!,
-              style: context.textStyles.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                height: 1.4,
-              ),
-            ),
-          ],
-          const SizedBox(height: AppSpacing.md),
-          child,
-        ],
-      ),
-    );
-  }
-}
-
-class _QuietPrompts extends StatelessWidget {
-  final List<String> prompts;
-
-  const _QuietPrompts({required this.prompts});
-
-  @override
-  Widget build(BuildContext context) {
-    return DefaultTextStyle(
-      style: (Theme.of(context).textTheme.bodySmall ?? const TextStyle()).copyWith(
-        color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.75),
-        height: 1.5,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (final p in prompts)
-            Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.xs),
-              child: Text(p),
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-class _EntryToneToggle extends StatelessWidget {
-  final bool highlighted;
-  final ValueChanged<bool> onChanged;
-
-  const _EntryToneToggle({required this.highlighted, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.sm),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(AppRadius.xl),
-        border: Border.all(color: scheme.outline.withValues(alpha: 0.15)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: SegmentedButton<bool>(
-              style: ButtonStyle(
-                backgroundColor: WidgetStateProperty.resolveWith(
-                  (states) => states.contains(WidgetState.selected) ? scheme.primaryContainer : scheme.surface,
-                ),
-                foregroundColor: WidgetStateProperty.resolveWith(
-                  (states) => states.contains(WidgetState.selected) ? scheme.onPrimaryContainer : scheme.onSurface,
-                ),
-                side: WidgetStateProperty.all(BorderSide(color: scheme.outline.withValues(alpha: 0.25))),
-                shape: WidgetStateProperty.all(
-                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppRadius.lg)),
-                ),
-                textStyle: WidgetStatePropertyAll(context.textStyles.labelLarge),
-                padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
-              ),
-              segments: const [
-                ButtonSegment(value: false, label: Text('Normal'), icon: Icon(Icons.notes_outlined)),
-                ButtonSegment(value: true, label: Text('Highlight'), icon: Icon(Icons.bookmark_border)),
-              ],
-              selected: {highlighted},
-              onSelectionChanged: (s) => onChanged(s.first),
-            ),
-          ),
-        ],
       ),
     );
   }

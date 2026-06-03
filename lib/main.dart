@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:provider/provider.dart';
 import 'package:faithful_journal/theme.dart';
 import 'package:faithful_journal/nav.dart';

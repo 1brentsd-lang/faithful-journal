@@ -4,8 +4,6 @@ import 'package:provider/provider.dart';
 import 'package:faithful_journal/models/journal_entry.dart';
 import 'package:faithful_journal/services/entry_service.dart';
 import 'package:faithful_journal/widgets/entry_card.dart';
-import 'package:faithful_journal/widgets/app_filter_chip.dart';
-import 'package:faithful_journal/widgets/filter_panel.dart';
 import 'package:faithful_journal/theme.dart';
 
 class ArchiveScreen extends StatefulWidget {
@@ -15,13 +13,9 @@ class ArchiveScreen extends StatefulWidget {
   State<ArchiveScreen> createState() => _ArchiveScreenState();
 }
 
-enum _ArchiveKind { all, reflections, questions }
-
 class _ArchiveScreenState extends State<ArchiveScreen> {
   String? _selectedTopic;
   String? _selectedBook;
-  _ArchiveKind _kind = _ArchiveKind.all;
-  QuestionFilter _questionFilter = QuestionFilter.all;
 
   @override
   Widget build(BuildContext context) {
@@ -36,25 +30,14 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
             final allBooks = entryService.getAllBooks();
             
             List<JournalEntry> filteredEntries = entryService.entries;
-
-            if (_kind == _ArchiveKind.reflections) {
-              filteredEntries = filteredEntries.where((e) => e.entryType == JournalEntryType.soap).toList();
-            } else if (_kind == _ArchiveKind.questions) {
-              filteredEntries = filteredEntries.where((e) => e.entryType == JournalEntryType.question).toList();
-              if (_questionFilter == QuestionFilter.stillWrestling) {
-                filteredEntries = filteredEntries.where((e) => !e.hasBeginningToUnderstand).toList();
-              } else if (_questionFilter == QuestionFilter.developingUnderstanding) {
-                filteredEntries = filteredEntries.where((e) => e.hasBeginningToUnderstand).toList();
-              }
-            }
             
-            if (_kind != _ArchiveKind.questions && _selectedTopic != null) {
+            if (_selectedTopic != null) {
               filteredEntries = filteredEntries
                   .where((e) => e.topic == _selectedTopic)
                   .toList();
             }
             
-            if (_kind != _ArchiveKind.questions && _selectedBook != null) {
+            if (_selectedBook != null) {
               filteredEntries = filteredEntries
                   .where((e) => e.book == _selectedBook)
                   .toList();
@@ -62,136 +45,89 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
 
             return Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.sm),
-                  child: FilterPanel(
-                    padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.md, AppSpacing.md, AppSpacing.sm),
+                if (allTopics.isNotEmpty || allBooks.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.all(AppSpacing.md),
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
-                            children: [
-                              AppFilterChip(
-                                label: 'All',
-                                isSelected: _kind == _ArchiveKind.all,
-                                onSelected: (_) => setState(() => _kind = _ArchiveKind.all),
-                              ),
-                              const SizedBox(width: AppSpacing.sm),
-                              AppFilterChip(
-                                label: 'Reflections',
-                                isSelected: _kind == _ArchiveKind.reflections,
-                                onSelected: (_) => setState(() => _kind = _ArchiveKind.reflections),
-                              ),
-                              const SizedBox(width: AppSpacing.sm),
-                              AppFilterChip(
-                                label: 'Questions',
-                                isSelected: _kind == _ArchiveKind.questions,
-                                onSelected: (_) => setState(() => _kind = _ArchiveKind.questions),
-                              ),
-                            ],
+                        if (allTopics.isNotEmpty) ...[
+                          Text(
+                            'Filter by Topic',
+                            style: context.textStyles.labelMedium?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
                           ),
-                        ),
-                        if (_kind == _ArchiveKind.questions) ...[
-                          const SizedBox(height: AppSpacing.md),
+                          const SizedBox(height: AppSpacing.sm),
                           SingleChildScrollView(
                             scrollDirection: Axis.horizontal,
                             child: Row(
                               children: [
-                                AppFilterChip(
-                                  label: 'All Questions',
-                                  isSelected: _questionFilter == QuestionFilter.all,
-                                  onSelected: (_) => setState(() => _questionFilter = QuestionFilter.all),
+                                FilterChipWidget(
+                                  label: 'All Topics',
+                                  isSelected: _selectedTopic == null,
+                                  onSelected: (_) {
+                                    setState(() => _selectedTopic = null);
+                                  },
                                 ),
                                 const SizedBox(width: AppSpacing.sm),
-                                AppFilterChip(
-                                  label: 'Still Wrestling',
-                                  isSelected: _questionFilter == QuestionFilter.stillWrestling,
-                                  onSelected: (_) => setState(() => _questionFilter = QuestionFilter.stillWrestling),
-                                ),
-                                const SizedBox(width: AppSpacing.sm),
-                                AppFilterChip(
-                                  label: 'Developing Understanding',
-                                  isSelected: _questionFilter == QuestionFilter.developingUnderstanding,
-                                  onSelected: (_) => setState(() => _questionFilter = QuestionFilter.developingUnderstanding),
-                                ),
+                                ...allTopics.map((topic) => Padding(
+                                  padding: const EdgeInsets.only(right: AppSpacing.sm),
+                                  child: FilterChipWidget(
+                                    label: topic,
+                                    isSelected: _selectedTopic == topic,
+                                    onSelected: (_) {
+                                      setState(() {
+                                        _selectedTopic = topic;
+                                      });
+                                    },
+                                  ),
+                                )),
                               ],
                             ),
                           ),
                         ],
-                        if (_kind != _ArchiveKind.questions && (allTopics.isNotEmpty || allBooks.isNotEmpty)) ...[
+                        if (allBooks.isNotEmpty) ...[
                           const SizedBox(height: AppSpacing.md),
-                          if (allTopics.isNotEmpty) ...[
-                            Text(
-                              'Filter by Topic',
-                              style: context.textStyles.labelMedium?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
+                          Text(
+                            'Filter by Book',
+                            style: context.textStyles.labelMedium?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
                             ),
-                            const SizedBox(height: AppSpacing.sm),
-                            SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: Row(
-                                children: [
-                                  AppFilterChip(
-                                    label: 'All Topics',
-                                    isSelected: _selectedTopic == null,
-                                    onSelected: (_) => setState(() => _selectedTopic = null),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                FilterChipWidget(
+                                  label: 'All Books',
+                                  isSelected: _selectedBook == null,
+                                  onSelected: (_) {
+                                    setState(() => _selectedBook = null);
+                                  },
+                                ),
+                                const SizedBox(width: AppSpacing.sm),
+                                ...allBooks.map((book) => Padding(
+                                  padding: const EdgeInsets.only(right: AppSpacing.sm),
+                                  child: FilterChipWidget(
+                                    label: book,
+                                    isSelected: _selectedBook == book,
+                                    onSelected: (_) {
+                                      setState(() {
+                                        _selectedBook = book;
+                                      });
+                                    },
                                   ),
-                                  const SizedBox(width: AppSpacing.sm),
-                                  ...allTopics.map(
-                                    (topic) => Padding(
-                                      padding: const EdgeInsets.only(right: AppSpacing.sm),
-                                      child: AppFilterChip(
-                                        label: topic,
-                                        isSelected: _selectedTopic == topic,
-                                        onSelected: (_) => setState(() => _selectedTopic = topic),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                                )),
+                              ],
                             ),
-                          ],
-                          if (allBooks.isNotEmpty) ...[
-                            const SizedBox(height: AppSpacing.md),
-                            Text(
-                              'Filter by Book',
-                              style: context.textStyles.labelMedium?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                            const SizedBox(height: AppSpacing.sm),
-                            SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: Row(
-                                children: [
-                                  AppFilterChip(
-                                    label: 'All Books',
-                                    isSelected: _selectedBook == null,
-                                    onSelected: (_) => setState(() => _selectedBook = null),
-                                  ),
-                                  const SizedBox(width: AppSpacing.sm),
-                                  ...allBooks.map(
-                                    (book) => Padding(
-                                      padding: const EdgeInsets.only(right: AppSpacing.sm),
-                                      child: AppFilterChip(
-                                        label: book,
-                                        isSelected: _selectedBook == book,
-                                        onSelected: (_) => setState(() => _selectedBook = book),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
+                          ),
                         ],
                       ],
                     ),
                   ),
-                ),
                 Expanded(
                   child: filteredEntries.isEmpty
                       ? Center(
@@ -241,3 +177,37 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   }
 }
 
+class FilterChipWidget extends StatelessWidget {
+  final String label;
+  final bool isSelected;
+  final ValueChanged<bool> onSelected;
+
+  const FilterChipWidget({
+    super.key,
+    required this.label,
+    required this.isSelected,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return FilterChip(
+      label: Text(label),
+      selected: isSelected,
+      onSelected: onSelected,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      selectedColor: Theme.of(context).colorScheme.primaryContainer,
+      labelStyle: TextStyle(
+        color: isSelected
+            ? Theme.of(context).colorScheme.onPrimaryContainer
+            : Theme.of(context).colorScheme.onSurface,
+      ),
+      side: BorderSide(
+        color: isSelected
+            ? Theme.of(context).colorScheme.primary
+            : Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+    );
+  }
+}
