@@ -247,7 +247,7 @@ ThemeData get lightTheme => ThemeData(
     ),
     contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
   ),
-  textTheme: _buildTextTheme(Brightness.light),
+  textTheme: _buildTextTheme(),
 );
 
 /// Dark theme with good contrast and readability
@@ -327,81 +327,34 @@ ThemeData get darkTheme => ThemeData(
     ),
     contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
   ),
-  textTheme: _buildTextTheme(Brightness.dark),
+  textTheme: _buildTextTheme(),
 );
 
-/// Build text theme using Lora serif for reflective content and Inter for UI
-TextTheme _buildTextTheme(Brightness brightness) {
+/// Build text theme using platform-native fonts.
+///
+/// We intentionally avoid external font packages for deployment stability.
+/// For a quiet “journal” tone, long-form reading styles use a generic serif
+/// family when available (Android/iOS/Web will map this to a system serif).
+TextTheme _buildTextTheme() {
+  // NOTE (stability): We intentionally avoid the google_fonts package to keep
+  // web builds stable across CI/deploy environments (e.g., Vercel).
+  // Flutter will use platform-default fonts (Roboto/SF Pro/etc.).
+  // We still keep a calm typographic hierarchy via sizes/weights/line-height.
   return TextTheme(
-    displayLarge: const TextStyle(
-      fontSize: FontSizes.displayLarge,
-      fontWeight: FontWeight.w400,
-      letterSpacing: -0.25,
-    ),
-    displayMedium: const TextStyle(
-      fontSize: FontSizes.displayMedium,
-      fontWeight: FontWeight.w400,
-    ),
-    displaySmall: const TextStyle(
-      fontSize: FontSizes.displaySmall,
-      fontWeight: FontWeight.w400,
-    ),
-    headlineLarge: const TextStyle(
-      fontSize: FontSizes.headlineLarge,
-      fontWeight: FontWeight.w600,
-      letterSpacing: -0.5,
-    ),
-    headlineMedium: const TextStyle(
-      fontSize: FontSizes.headlineMedium,
-      fontWeight: FontWeight.w600,
-    ),
-    headlineSmall: const TextStyle(
-      fontSize: FontSizes.headlineSmall,
-      fontWeight: FontWeight.w600,
-    ),
-    titleLarge: const TextStyle(
-      fontSize: FontSizes.titleLarge,
-      fontWeight: FontWeight.w600,
-    ),
-    titleMedium: const TextStyle(
-      fontSize: FontSizes.titleMedium,
-      fontWeight: FontWeight.w500,
-    ),
-    titleSmall: const TextStyle(
-      fontSize: FontSizes.titleSmall,
-      fontWeight: FontWeight.w500,
-    ),
-    labelLarge: const TextStyle(
-      fontSize: FontSizes.labelLarge,
-      fontWeight: FontWeight.w500,
-      letterSpacing: 0.1,
-    ),
-    labelMedium: const TextStyle(
-      fontSize: FontSizes.labelMedium,
-      fontWeight: FontWeight.w500,
-      letterSpacing: 0.5,
-    ),
-    labelSmall: const TextStyle(
-      fontSize: FontSizes.labelSmall,
-      fontWeight: FontWeight.w500,
-      letterSpacing: 0.5,
-    ),
-    bodyLarge: const TextStyle(
-      fontSize: FontSizes.bodyLarge,
-      fontWeight: FontWeight.w400,
-      letterSpacing: 0.15,
-      height: 1.6,
-    ),
-    bodyMedium: const TextStyle(
-      fontSize: FontSizes.bodyMedium,
-      fontWeight: FontWeight.w400,
-      letterSpacing: 0.25,
-      height: 1.5,
-    ),
-    bodySmall: const TextStyle(
-      fontSize: FontSizes.bodySmall,
-      fontWeight: FontWeight.w400,
-      letterSpacing: 0.4,
-    ),
+    displayLarge: const TextStyle(fontSize: FontSizes.displayLarge, fontWeight: FontWeight.w400, letterSpacing: -0.25),
+    displayMedium: const TextStyle(fontSize: FontSizes.displayMedium, fontWeight: FontWeight.w400),
+    displaySmall: const TextStyle(fontSize: FontSizes.displaySmall, fontWeight: FontWeight.w400),
+    headlineLarge: const TextStyle(fontSize: FontSizes.headlineLarge, fontWeight: FontWeight.w600, letterSpacing: -0.5),
+    headlineMedium: const TextStyle(fontSize: FontSizes.headlineMedium, fontWeight: FontWeight.w600),
+    headlineSmall: const TextStyle(fontSize: FontSizes.headlineSmall, fontWeight: FontWeight.w600),
+    titleLarge: const TextStyle(fontSize: FontSizes.titleLarge, fontWeight: FontWeight.w600),
+    titleMedium: const TextStyle(fontSize: FontSizes.titleMedium, fontWeight: FontWeight.w500),
+    titleSmall: const TextStyle(fontSize: FontSizes.titleSmall, fontWeight: FontWeight.w500),
+    labelLarge: const TextStyle(fontSize: FontSizes.labelLarge, fontWeight: FontWeight.w500, letterSpacing: 0.1),
+    labelMedium: const TextStyle(fontSize: FontSizes.labelMedium, fontWeight: FontWeight.w500, letterSpacing: 0.5),
+    labelSmall: const TextStyle(fontSize: FontSizes.labelSmall, fontWeight: FontWeight.w500, letterSpacing: 0.5),
+    bodyLarge: const TextStyle(fontSize: FontSizes.bodyLarge, fontWeight: FontWeight.w400, letterSpacing: 0.15, height: 1.6, fontFamily: 'serif'),
+    bodyMedium: const TextStyle(fontSize: FontSizes.bodyMedium, fontWeight: FontWeight.w400, letterSpacing: 0.25, height: 1.5, fontFamily: 'serif'),
+    bodySmall: const TextStyle(fontSize: FontSizes.bodySmall, fontWeight: FontWeight.w400, letterSpacing: 0.4, fontFamily: 'serif'),
   );
 }
