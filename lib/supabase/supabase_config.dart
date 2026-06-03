@@ -10,13 +10,17 @@ class SupabaseConfig {
   static Future<void> initialize() async {
     // Prefer runtime-provided env vars (Dreamflow publish/runtime), but keep
     // the generated constants as a safe fallback.
-    const envUrl = String.fromEnvironment('SUPABASE_URL');
-    const envAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+    const envUrl = String.fromEnvironment('');
+    const envAnonKey = String.fromEnvironment('');
 
     final urlToUse = envUrl.isNotEmpty ? envUrl : supabaseUrl;
     final anonKeyToUse = envAnonKey.isNotEmpty ? envAnonKey : anonKey;
 
-    await Supabase.initialize(url: urlToUse, anonKey: anonKeyToUse, debug: kDebugMode);
+    await Supabase.initialize(
+      url: urlToUse,
+      anonKey: anonKeyToUse,
+      debug: kDebugMode,
+    );
   }
 
   static SupabaseClient get client => Supabase.instance.client;

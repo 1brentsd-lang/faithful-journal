@@ -1,6 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import '/auth/auth_manager.dart';
+import 'package:faithful_journal/auth/auth_manager.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class SupabaseAuthManager extends AuthManager with AnonymousSignInManager {
@@ -20,6 +20,26 @@ class SupabaseAuthManager extends AuthManager with AnonymousSignInManager {
     } catch (e) {
       debugPrint('Supabase anonymous sign-in failed: $e');
       return null;
+    }
+  }
+
+  /// Email magic link (OTP) sign-in.
+  ///
+  /// Works well for web when anonymous auth is disabled.
+  Future<void> sendMagicLink({required String email}) async {
+    try {
+      // Use an explicit callback route so the app can reliably complete the
+      // code → session exchange on web.
+      final redirectTo = kIsWeb ? Uri.base.replace(path: '/auth/callback', queryParameters: {}).toString() : null;
+      await _client.auth.signInWithOtp(
+        email: email,
+        // On web, Supabase appends `?code=...` (PKCE) and/or other auth params.
+        // We handle this in AuthCallbackScreen.
+        emailRedirectTo: redirectTo,
+      );
+    } catch (e) {
+      debugPrint('Supabase sendMagicLink failed: $e');
+      rethrow;
     }
   }
 

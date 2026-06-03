@@ -5,15 +5,23 @@ import 'package:uuid/uuid.dart';
 import 'package:faithful_journal/models/journal_entry.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+enum QuestionFilter { all, stillWrestling, developingUnderstanding }
+
 class EntryService extends ChangeNotifier {
   static const String _entriesKey = 'journal_entries';
-  static const String _testingUserId = '00000000-0000-0000-0000-000000000000';
+  /// Temporary testing-mode owner id when no Supabase session exists.
+  ///
+  /// This keeps the existing schema intact (`user_id` is NOT NULL), while
+  /// allowing public/anonymous CRUD during live testing.
+  static const String publicTestUserId = '00000000-0000-0000-0000-000000000001';
+
   final _uuid = const Uuid();
   List<JournalEntry> _entries = [];
   bool _isLoading = true;
 
   bool _useSupabase = false;
   SupabaseClient? _supabase;
+  bool _anonAuthUnavailable = false;
 
   List<JournalEntry> get entries => List.unmodifiable(_entries);
   bool get isLoading => _isLoading;
@@ -24,15 +32,19 @@ class EntryService extends ChangeNotifier {
 
   bool get isUsingSupabase => _useSupabase;
 
+  /// Returns a stable identifier for the current user.
+  ///
+  /// - When using Supabase, this prefers the authenticated user id if present.
+  /// - During the current testing phase (no auth required), this falls back to
+  ///   [publicTestUserId] so DB inserts still satisfy the NOT NULL `user_id`.
+  /// - When running locally (no Supabase), this falls back to a stable local id.
   String get currentUserId {
-    final supabaseId = _supabase?.auth.currentUser?.id;
-    // If Supabase is active but auth isn't configured, we fall back to a fixed
-    // testing user id (and upsert a matching row in `public.users`) so FK constraints
-    // don't block inserts.
     if (_useSupabase) {
-      return (supabaseId != null && supabaseId.isNotEmpty) ? supabaseId : _testingUserId;
+      final id = _supabase?.auth.currentUser?.id;
+      if (id != null && id.isNotEmpty) return id;
+      return publicTestUserId;
     }
-    return (supabaseId != null && supabaseId.isNotEmpty) ? supabaseId : 'user_1';
+    return 'user_1';
   }
 
   String? get supabaseUserId => _supabase?.auth.currentUser?.id;
@@ -71,15 +83,21 @@ class EntryService extends ChangeNotifier {
     if (_supabase == null) return;
     try {
       if (_supabase!.auth.currentUser != null) return;
+      if (_anonAuthUnavailable) return;
       await _supabase!.auth.signInAnonymously();
     } catch (e) {
-      // Don't silently fall back to local mode; we want to see and log the error.
-      // Common cause: anonymous provider disabled in Supabase Auth settings.
+      // If anonymous auth is disabled, remember it so we don't repeatedly hit auth.
+      final msg = e.toString();
+      if (msg.contains('anonymous_provider_disabled') || msg.contains('Anonymous sign-ins are disabled')) {
+        _anonAuthUnavailable = true;
+      }
       debugPrint(
-        'Supabase sign-in failed (anonymous). Auth uid will be null; RLS may block inserts/selects until auth is configured. Error: $e',
+        'Supabase sign-in failed (anonymous). User must authenticate before reading/writing journal entries. Error: $e',
       );
     }
   }
+
+  bool get needsAuth => _useSupabase && (_supabase?.auth.currentUser == null);
 
   /// Ensures a Supabase auth session exists (anonymous by default).
   /// Safe to call even when Supabase isn't configured.
@@ -105,21 +123,10 @@ class EntryService extends ChangeNotifier {
   Future<void> _loadEntriesFromSupabase() async {
     if (_supabase == null) return;
     try {
-      final authedUserId = _supabase!.auth.currentUser?.id;
-      dynamic query = _supabase!.from('journal_entries').select();
-
-      // If we have an authenticated user, only load their rows.
-      // If auth is not configured (uid == null), we fall back to loading all rows.
-      // This is intended ONLY for temporary testing while you configure auth/RLS.
-      if (authedUserId != null && authedUserId.isNotEmpty) {
-        query = query.eq('user_id', authedUserId);
-      } else {
-        debugPrint(
-          'EntryService: Supabase currentUser is null; loading journal_entries without user_id filter (temporary testing mode).',
-        );
-      }
-
-      final rows = await query.order('created_at', ascending: false);
+      final rows = await _supabase!
+          .from('journal_entries')
+          .select()
+          .order('created_at', ascending: false);
       _entries = (rows as List)
           .cast<Map<String, dynamic>>()
           .map(JournalEntry.fromJson)
@@ -127,34 +134,6 @@ class EntryService extends ChangeNotifier {
     } catch (e) {
       debugPrint('Failed to load entries from Supabase: $e');
       _entries = [];
-    }
-  }
-
-  Future<void> _ensureTestingUserExists() async {
-    if (_supabase == null) return;
-    try {
-      final now = DateTime.now().toIso8601String();
-      await _supabase!
-          .from('users')
-          .upsert({
-            'id': _testingUserId,
-            'name': 'Testing User',
-            'email': 'testing@local',
-            'created_at': now,
-            'updated_at': now,
-          })
-          .select('id')
-          .maybeSingle();
-      debugPrint('EntryService: ensured testing user exists (id=$_testingUserId).');
-    } catch (e) {
-      if (e is PostgrestException) {
-        debugPrint(
-          'EntryService: failed to upsert testing user (PostgrestException): message=${e.message} code=${e.code} details=${e.details} hint=${e.hint}',
-        );
-      } else {
-        debugPrint('EntryService: failed to upsert testing user: $e');
-      }
-      // Do not rethrow; entry insert will surface a clearer error if still blocked.
     }
   }
 
@@ -269,29 +248,28 @@ class EntryService extends ChangeNotifier {
     if (_useSupabase && _supabase != null) {
       try {
         debugPrint('createEntry(): Save triggered. useSupabase=$_useSupabase');
+        // Testing mode: auth is optional. We still attempt anonymous sign-in
+        // (when enabled), but we do not require it.
         await _ensureSignedIn();
-        final authedUserId = _supabase!.auth.currentUser?.id;
-        final effectiveUserId = (authedUserId != null && authedUserId.isNotEmpty) ? authedUserId : _testingUserId;
-        if (authedUserId == null || authedUserId.isEmpty) {
-          debugPrint(
-            'createEntry(): auth.uid() is null. Using testing user_id=$effectiveUserId. '
-            'Best fix: enable a real auth provider (Anonymous or Email) in Supabase Auth settings.',
-          );
-          await _ensureTestingUserExists();
-        }
+        final ownerId = _supabase!.auth.currentUser?.id ?? publicTestUserId;
 
+        final s = entry.observationStructured;
         final insertMap = <String, dynamic>{
           'id': entry.id,
-          // In normal operation this is REQUIRED and must match auth.uid().
-          // In testing mode (auth.uid() == null), we use a fixed testing user id.
-          'user_id': effectiveUserId,
+          'user_id': ownerId,
+          'entry_type': entry.entryType == JournalEntryType.question ? 'question' : 'soap',
+          'highlighted': entry.highlighted,
           'scripture_reference': entry.scriptureReference,
           'scripture_text': entry.scriptureText,
           'observation': entry.observation,
-          'observation_structured': entry.observationStructured?.toJson(),
           'application': entry.application,
           'prayer': entry.prayer,
+          'question': entry.question,
+          // DB column name is `resolution` (model field is `beginningToUnderstand`).
+          'resolution': entry.beginningToUnderstand,
           'topic': entry.topic,
+          'before_passage': s?.leadingContext,
+          'after_passage': s?.followingContext,
           'created_at': entry.createdAt.toIso8601String(),
           'updated_at': entry.updatedAt.toIso8601String(),
         };
@@ -332,14 +310,21 @@ class EntryService extends ChangeNotifier {
       _entries[index] = entry;
       if (_useSupabase && _supabase != null) {
         try {
+          await _ensureSignedIn();
+          final s = entry.observationStructured;
           final updateMap = {
+              'entry_type': entry.entryType == JournalEntryType.question ? 'question' : 'soap',
+              'highlighted': entry.highlighted,
             'scripture_reference': entry.scriptureReference,
             'scripture_text': entry.scriptureText,
             'observation': entry.observation,
-            'observation_structured': entry.observationStructured?.toJson(),
             'application': entry.application,
             'prayer': entry.prayer,
+              'question': entry.question,
+            'resolution': entry.beginningToUnderstand,
             'topic': entry.topic,
+            'before_passage': s?.leadingContext,
+            'after_passage': s?.followingContext,
             'updated_at': entry.updatedAt.toIso8601String(),
           };
           await _supabase!
@@ -349,7 +334,8 @@ class EntryService extends ChangeNotifier {
           notifyListeners();
           return;
         } catch (e) {
-          debugPrint('Supabase updateEntry failed, falling back to local: $e');
+          debugPrint('Supabase updateEntry failed: $e');
+          rethrow;
         }
       }
       await _saveEntries();
@@ -361,11 +347,13 @@ class EntryService extends ChangeNotifier {
     _entries.removeWhere((e) => e.id == id);
     if (_useSupabase && _supabase != null) {
       try {
+        await _ensureSignedIn();
         await _supabase!.from('journal_entries').delete().eq('id', id);
         notifyListeners();
         return;
       } catch (e) {
-        debugPrint('Supabase deleteEntry failed, falling back to local: $e');
+        debugPrint('Supabase deleteEntry failed: $e');
+        rethrow;
       }
     }
     await _saveEntries();
@@ -381,7 +369,25 @@ class EntryService extends ChangeNotifier {
   }
 
   List<JournalEntry> getRecentEntries({int limit = 5}) {
-    return _entries.take(limit).toList();
+    final soap = _entries.where((e) => e.entryType == JournalEntryType.soap).toList();
+    return soap.take(limit).toList();
+  }
+
+  List<JournalEntry> getRecentQuestions({int limit = 5}) {
+    final questions = _entries.where((e) => e.entryType == JournalEntryType.question).toList();
+    return questions.take(limit).toList();
+  }
+
+  List<JournalEntry> getQuestions({QuestionFilter filter = QuestionFilter.all}) {
+    final questions = _entries.where((e) => e.entryType == JournalEntryType.question);
+    switch (filter) {
+      case QuestionFilter.all:
+        return questions.toList();
+      case QuestionFilter.stillWrestling:
+        return questions.where((e) => !e.hasBeginningToUnderstand).toList();
+      case QuestionFilter.developingUnderstanding:
+        return questions.where((e) => e.hasBeginningToUnderstand).toList();
+    }
   }
 
   List<JournalEntry> getEntriesByTopic(String topic) {
@@ -401,6 +407,8 @@ class EntryService extends ChangeNotifier {
     final lowerQuery = query.toLowerCase();
     return _entries.where((e) {
       return e.scriptureReference.toLowerCase().contains(lowerQuery) ||
+          (e.question ?? '').toLowerCase().contains(lowerQuery) ||
+          (e.beginningToUnderstand ?? '').toLowerCase().contains(lowerQuery) ||
           e.observation.toLowerCase().contains(lowerQuery) ||
           e.application.toLowerCase().contains(lowerQuery) ||
           e.prayer.toLowerCase().contains(lowerQuery) ||

@@ -19,7 +19,14 @@ class EntryDetailScreen extends StatelessWidget {
         actions: [
           IconButton(
             icon: const Icon(Icons.edit),
-            onPressed: () => context.push('/edit-entry/$entryId'),
+            onPressed: () {
+              final entry = context.read<EntryService>().getEntryById(entryId);
+              if (entry?.isQuestion == true) {
+                context.push('/questions/edit/$entryId');
+              } else {
+                context.push('/edit-entry/$entryId');
+              }
+            },
           ),
           IconButton(
             icon: const Icon(Icons.delete),
@@ -50,7 +57,9 @@ class EntryDetailScreen extends StatelessWidget {
               );
             }
 
-            final relatedByTopic = entryService.getRelatedByTopic(entryId, entry.topic);
+            final relatedByTopic = entry.topic.trim().isEmpty
+                ? <JournalEntry>[]
+                : entryService.getRelatedByTopic(entryId, entry.topic);
             final relatedByBook = entryService.getRelatedByBook(entryId, entry.book);
             final dateFormat = DateFormat('EEEE, MMMM d, yyyy');
 
@@ -59,12 +68,36 @@ class EntryDetailScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    entry.scriptureReference,
-                    style: context.textStyles.headlineMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.primary,
+                  if (entry.isQuestion) ...[
+                    Row(
+                      children: [
+                        Icon(Icons.help_outline, color: Theme.of(context).colorScheme.primary),
+                        const SizedBox(width: AppSpacing.sm),
+                        Text(
+                          'Question',
+                          style: context.textStyles.headlineSmall?.copyWith(
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
+                    if (entry.scriptureReference.trim().isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.md),
+                      Text(
+                        entry.scriptureReference.trim(),
+                        style: context.textStyles.titleLarge?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                      ),
+                    ],
+                  ] else ...[
+                    Text(
+                      entry.scriptureReference,
+                      style: context.textStyles.headlineMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ],
                   if (entry.scriptureText != null && entry.scriptureText!.trim().isNotEmpty) ...[
                     const SizedBox(height: AppSpacing.md),
                     Container(
@@ -86,20 +119,22 @@ class EntryDetailScreen extends StatelessWidget {
                   const SizedBox(height: AppSpacing.sm),
                   Row(
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.secondaryContainer,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          entry.topic,
-                          style: context.textStyles.labelMedium?.copyWith(
-                            color: Theme.of(context).colorScheme.onSecondaryContainer,
+                      if (!entry.isQuestion && entry.topic.trim().isNotEmpty) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.secondaryContainer,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            entry.topic,
+                            style: context.textStyles.labelMedium?.copyWith(
+                              color: Theme.of(context).colorScheme.onSecondaryContainer,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: AppSpacing.md),
+                        const SizedBox(width: AppSpacing.md),
+                      ],
                       Text(
                         dateFormat.format(entry.createdAt),
                         style: context.textStyles.bodySmall?.copyWith(
@@ -109,23 +144,54 @@ class EntryDetailScreen extends StatelessWidget {
                     ],
                   ),
                   const SizedBox(height: AppSpacing.xl),
-                  SectionHeader(title: 'Observation', icon: Icons.visibility),
-                  const SizedBox(height: AppSpacing.md),
-                  ObservationBody(entry: entry),
-                  const SizedBox(height: AppSpacing.xl),
-                  SectionHeader(title: 'Application', icon: Icons.lightbulb),
-                  const SizedBox(height: AppSpacing.md),
-                  Text(
-                    entry.application,
-                    style: context.textStyles.bodyLarge,
-                  ),
-                  const SizedBox(height: AppSpacing.xl),
-                  SectionHeader(title: 'Prayer', icon: Icons.favorite),
-                  const SizedBox(height: AppSpacing.md),
-                  Text(
-                    entry.prayer,
-                    style: context.textStyles.bodyLarge,
-                  ),
+                  if (entry.isQuestion) ...[
+                    SectionHeader(title: 'Question', icon: Icons.help_outline),
+                    const SizedBox(height: AppSpacing.md),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                      ),
+                      child: Text(
+                        (entry.question ?? '').trim(),
+                        style: context.textStyles.bodyLarge?.copyWith(height: 1.65),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xl),
+                    SectionHeader(title: 'What I’m Beginning to Understand', icon: Icons.auto_awesome),
+                    const SizedBox(height: AppSpacing.md),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                      ),
+                      child: Text(
+                        (entry.beginningToUnderstand ?? '').trim().isEmpty
+                            ? '—'
+                            : (entry.beginningToUnderstand ?? '').trim(),
+                        style: context.textStyles.bodyLarge?.copyWith(
+                          height: 1.65,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ] else ...[
+                    SectionHeader(title: 'Observation', icon: Icons.visibility),
+                    const SizedBox(height: AppSpacing.md),
+                    ObservationBody(entry: entry),
+                    const SizedBox(height: AppSpacing.xl),
+                    SectionHeader(title: 'Application', icon: Icons.lightbulb),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(entry.application, style: context.textStyles.bodyLarge),
+                    const SizedBox(height: AppSpacing.xl),
+                    SectionHeader(title: 'Prayer', icon: Icons.favorite),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(entry.prayer, style: context.textStyles.bodyLarge),
+                  ],
                   const SizedBox(height: AppSpacing.xxl),
                   if (relatedByTopic.isNotEmpty) ...[
                     RelatedEntriesList(
@@ -265,8 +331,6 @@ class ObservationBody extends StatelessWidget {
 
     final metaParts = <String>[];
     if (entry.book.trim().isNotEmpty) metaParts.add(entry.book.trim());
-    if (s != null && s.author.trim().isNotEmpty) metaParts.add(s.author.trim());
-    if (s != null && s.audience.trim().isNotEmpty) metaParts.add(s.audience.trim());
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

@@ -54,10 +54,10 @@ class HomePage extends StatelessWidget {
                         Row(
                           children: [
                             Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: () => context.push('/search'),
-                                icon: Icon(Icons.search, color: Theme.of(context).colorScheme.primary),
-                                label: const Text('Search'),
+                              child: FilledButton.icon(
+                                onPressed: () => context.push('/questions'),
+                                icon: Icon(Icons.help_outline, color: Theme.of(context).colorScheme.onPrimary),
+                                label: const Text('Questions'),
                               ),
                             ),
                             const SizedBox(width: AppSpacing.md),

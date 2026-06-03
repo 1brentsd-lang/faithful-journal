@@ -29,7 +29,7 @@ class WeeklyReviewScreen extends StatelessWidget {
                           Icon(
                             Icons.event_note,
                             size: 64,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.5),
+                            color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
                           ),
                           const SizedBox(height: AppSpacing.lg),
                           Text(
