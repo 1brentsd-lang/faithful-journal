@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'package:faithful_journal/auth/supabase_auth_manager.dart';
 import 'package:provider/provider.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 /// Bottom sheet that helps the user create an auth session when Supabase RLS
 /// requires a real `auth.uid()`.
@@ -17,9 +19,29 @@ class AuthRequiredSheet extends StatefulWidget {
 class _AuthRequiredSheetState extends State<AuthRequiredSheet> {
   final _emailController = TextEditingController();
   bool _isSending = false;
+  bool _isSignedIn = false;
+  StreamSubscription<AuthState>? _authSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _isSignedIn = Supabase.instance.client.auth.currentUser != null;
+    _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((_) {
+      if (!mounted) return;
+      final signedIn = Supabase.instance.client.auth.currentUser != null;
+      setState(() => _isSignedIn = signedIn);
+      if (signedIn) {
+        // Friction-light: once the session exists, automatically continue.
+        widget.onAuthenticated();
+        // Return `true` so callers can resume the intended action.
+        context.pop(true);
+      }
+    });
+  }
 
   @override
   void dispose() {
+    _authSub?.cancel();
     _emailController.dispose();
     super.dispose();
   }
@@ -97,11 +119,13 @@ class _AuthRequiredSheetState extends State<AuthRequiredSheet> {
               children: [
                 Expanded(
                   child: TextButton(
-                    onPressed: () {
-                      widget.onAuthenticated();
-                      context.pop();
-                    },
-                    child: const Text("I'm signed in now"),
+                    onPressed: !_isSignedIn
+                        ? null
+                        : () {
+                            widget.onAuthenticated();
+                            context.pop(true);
+                          },
+                    child: Text(_isSignedIn ? "Continue" : "Waiting for sign-in…"),
                   ),
                 ),
               ],

@@ -6,12 +6,15 @@ import 'package:provider/provider.dart';
 import 'package:faithful_journal/models/journal_entry.dart';
 import 'package:faithful_journal/services/entry_service.dart';
 import 'package:faithful_journal/widgets/resurfacing_section.dart';
+import 'package:faithful_journal/widgets/related_entries_list.dart';
+import 'package:faithful_journal/widgets/auth_required_sheet.dart';
 import 'package:faithful_journal/theme.dart';
 
 class EntryDetailScreen extends StatelessWidget {
   final String entryId;
+  final bool isSavedView;
 
-  const EntryDetailScreen({super.key, required this.entryId});
+  const EntryDetailScreen({super.key, required this.entryId, this.isSavedView = false});
 
   @override
   Widget build(BuildContext context) {
@@ -31,6 +34,7 @@ class EntryDetailScreen extends StatelessWidget {
       },
       child: Scaffold(
         appBar: AppBar(
+          title: isSavedView ? const Text('Saved Entry') : null,
           automaticallyImplyLeading: false,
           leadingWidth: 96,
           leading: Padding(
@@ -49,21 +53,23 @@ class EntryDetailScreen extends StatelessWidget {
             ),
           ),
           actions: [
-            IconButton(
-              icon: const Icon(Icons.edit),
-              onPressed: () {
-                final entry = context.read<EntryService>().getEntryById(entryId);
-                if (entry?.isQuestion == true) {
-                  context.push('/questions/edit/$entryId');
-                } else {
-                  context.push('/edit-entry/$entryId');
-                }
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.delete),
-              onPressed: () => _confirmDelete(context),
-            ),
+            if (!isSavedView) ...[
+              IconButton(
+                icon: const Icon(Icons.edit),
+                onPressed: () {
+                  final entry = context.read<EntryService>().getEntryById(entryId);
+                  if (entry?.isQuestion == true) {
+                    context.push('/questions/edit/$entryId');
+                  } else {
+                    context.push('/edit-entry/$entryId');
+                  }
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.delete),
+                onPressed: () => _confirmDelete(context),
+              ),
+            ],
           ],
         ),
         body: SafeArea(
@@ -90,6 +96,7 @@ class EntryDetailScreen extends StatelessWidget {
             }
 
             final resurfacing = entryService.getResurfacingForEntry(entryId, maxItems: 5);
+            final relatedForSaved = entryService.getRelatedForSavedEntry(entryId, limit: 5);
             final dateFormat = DateFormat('EEEE, MMMM d, yyyy');
 
             return SingleChildScrollView(
@@ -97,6 +104,24 @@ class EntryDetailScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (isSavedView) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: scheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.check_circle, size: 18, color: scheme.onPrimaryContainer),
+                          const SizedBox(width: 8),
+                          Text('Saved', style: context.textStyles.labelLarge?.copyWith(color: scheme.onPrimaryContainer)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                  ],
                   if (entry.isQuestion) ...[
                     Row(
                       children: [
@@ -222,8 +247,12 @@ class EntryDetailScreen extends StatelessWidget {
                     Text(entry.prayer, style: context.textStyles.bodyLarge),
                   ],
                   const SizedBox(height: AppSpacing.xxl),
+                  if (isSavedView) ...[
+                    RelatedEntriesList(title: 'Related Entries', entries: relatedForSaved),
+                    const SizedBox(height: AppSpacing.xxl),
+                  ],
                   ResurfacingSection(
-                    title: 'Remembering',
+                    title: isSavedView ? 'Previous Reflections' : 'Previous Reflections',
                     subtitle: entry.chapterKey.trim().isEmpty
                         ? 'A few quiet memories to revisit.'
                         : 'From ${entry.chapterKey.trim()}',
@@ -290,6 +319,22 @@ class EntryDetailScreen extends StatelessWidget {
     if (confirmed != true || !context.mounted) return;
 
     try {
+      final entryService = context.read<EntryService>();
+      await entryService.ensureAuthenticated();
+      if (entryService.isUsingSupabase && entryService.needsAuth) {
+        final ok = await showModalBottomSheet<bool>(
+          context: context,
+          isScrollControlled: true,
+          showDragHandle: true,
+          builder: (_) => AuthRequiredSheet(
+            onAuthenticated: () {
+              context.read<EntryService>().refresh();
+            },
+          ),
+        );
+        if (!context.mounted) return;
+        if (ok != true && entryService.needsAuth) return;
+      }
       await context.read<EntryService>().deleteEntry(entryId);
     } catch (e) {
       if (!context.mounted) return;

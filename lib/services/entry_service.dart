@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -11,11 +12,13 @@ enum QuestionFilter { all, stillWrestling, developingUnderstanding }
 class EntryService extends ChangeNotifier {
   static const String _entriesKey = 'journal_entries';
   static const String _scriptureBackfillV2Key = 'scripture_metadata_backfill_v2_done';
-  /// Temporary testing-mode owner id when no Supabase session exists.
+
+  /// Thrown when Supabase is enabled but there is no signed-in user.
   ///
-  /// This keeps the existing schema intact (`user_id` is NOT NULL), while
-  /// allowing public/anonymous CRUD during live testing.
-  static const String publicTestUserId = '00000000-0000-0000-0000-000000000001';
+  /// We use this to keep UI behavior stable and intentional under RLS: instead
+  /// of red-screening on Postgrest 401/403 errors, screens can prompt the user
+  /// to sign in.
+  static const String _authRequiredMessage = 'AUTH_REQUIRED';
 
   final _uuid = const Uuid();
   List<JournalEntry> _entries = [];
@@ -23,7 +26,9 @@ class EntryService extends ChangeNotifier {
 
   bool _useSupabase = false;
   SupabaseClient? _supabase;
-  bool _anonAuthUnavailable = false;
+
+  /// Subscription for auth state changes so the app stays in sync.
+  StreamSubscription<AuthState>? _authSub;
 
   List<JournalEntry> get entries => List.unmodifiable(_entries);
   bool get isLoading => _isLoading;
@@ -32,31 +37,41 @@ class EntryService extends ChangeNotifier {
     _loadEntries();
   }
 
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    super.dispose();
+  }
+
   bool get isUsingSupabase => _useSupabase;
 
   /// Returns a stable identifier for the current user.
   ///
-  /// - When using Supabase, this prefers the authenticated user id if present.
-  /// - During the current testing phase (no auth required), this falls back to
-  ///   [publicTestUserId] so DB inserts still satisfy the NOT NULL `user_id`.
+  /// - When using Supabase, this requires a signed-in user.
   /// - When running locally (no Supabase), this falls back to a stable local id.
   String get currentUserId {
     if (_useSupabase) {
-      final id = _supabase?.auth.currentUser?.id;
-      if (id != null && id.isNotEmpty) return id;
-      return publicTestUserId;
+      return requireUserId();
     }
     return 'user_1';
   }
 
   String? get supabaseUserId => _supabase?.auth.currentUser?.id;
 
+  String requireUserId() {
+    final id = _supabase?.auth.currentUser?.id;
+    if (id == null || id.isEmpty) {
+      throw StateError(_authRequiredMessage);
+    }
+    return id;
+  }
+
   Future<void> _loadEntries() async {
     try {
       _supabase = _tryGetSupabaseClient();
       if (_supabase != null) {
         _useSupabase = true;
-        await _ensureSignedIn();
+        _bindAuthListenerIfNeeded();
         await _loadEntriesFromSupabase();
         await _backfillScriptureMetadataIfNeeded();
       } else {
@@ -170,22 +185,17 @@ class EntryService extends ChangeNotifier {
     }
   }
 
-  Future<void> _ensureSignedIn() async {
+  void _bindAuthListenerIfNeeded() {
     if (_supabase == null) return;
-    try {
-      if (_supabase!.auth.currentUser != null) return;
-      if (_anonAuthUnavailable) return;
-      await _supabase!.auth.signInAnonymously();
-    } catch (e) {
-      // If anonymous auth is disabled, remember it so we don't repeatedly hit auth.
-      final msg = e.toString();
-      if (msg.contains('anonymous_provider_disabled') || msg.contains('Anonymous sign-ins are disabled')) {
-        _anonAuthUnavailable = true;
+    _authSub ??= _supabase!.auth.onAuthStateChange.listen((data) async {
+      // Keep this extremely defensive: auth changes can happen during route
+      // transitions or when the app is backgrounded.
+      try {
+        await refresh();
+      } catch (e) {
+        debugPrint('EntryService auth refresh failed: $e');
       }
-      debugPrint(
-        'Supabase sign-in failed (anonymous). User must authenticate before reading/writing journal entries. Error: $e',
-      );
-    }
+    });
   }
 
   bool get needsAuth => _useSupabase && (_supabase?.auth.currentUser == null);
@@ -198,7 +208,7 @@ class EntryService extends ChangeNotifier {
       _useSupabase = _supabase != null;
     }
     if (_supabase == null) return;
-    await _ensureSignedIn();
+    _bindAuthListenerIfNeeded();
   }
 
   Future<void> refresh() async {
@@ -214,6 +224,10 @@ class EntryService extends ChangeNotifier {
   Future<void> _loadEntriesFromSupabase() async {
     if (_supabase == null) return;
     try {
+      if (needsAuth) {
+        _entries = [];
+        return;
+      }
       final rows = await _supabase!
           .from('journal_entries')
           .select()
@@ -336,13 +350,12 @@ class EntryService extends ChangeNotifier {
   }
 
   Future<void> createEntry(JournalEntry entry) async {
+    entry = entry.copyWith(topic: canonicalizeTopic(entry.topic));
     if (_useSupabase && _supabase != null) {
       try {
         debugPrint('createEntry(): Save triggered. useSupabase=$_useSupabase');
-        // Testing mode: auth is optional. We still attempt anonymous sign-in
-        // (when enabled), but we do not require it.
-        await _ensureSignedIn();
-        final ownerId = _supabase!.auth.currentUser?.id ?? publicTestUserId;
+        if (needsAuth) throw StateError(_authRequiredMessage);
+        final ownerId = requireUserId();
 
         final s = entry.observationStructured;
         final meta = _effectiveScriptureMetadata(entry);
@@ -398,12 +411,13 @@ class EntryService extends ChangeNotifier {
   }
 
   Future<void> updateEntry(JournalEntry entry) async {
+    entry = entry.copyWith(topic: canonicalizeTopic(entry.topic));
     final index = _entries.indexWhere((e) => e.id == entry.id);
     if (index != -1) {
       _entries[index] = entry;
       if (_useSupabase && _supabase != null) {
         try {
-          await _ensureSignedIn();
+          if (needsAuth) throw StateError(_authRequiredMessage);
           final s = entry.observationStructured;
           final meta = _effectiveScriptureMetadata(entry);
           final updateMap = {
@@ -447,7 +461,7 @@ class EntryService extends ChangeNotifier {
 
     if (_useSupabase && _supabase != null) {
       try {
-        await _ensureSignedIn();
+        if (needsAuth) throw StateError(_authRequiredMessage);
         await _supabase!.from('journal_entries').delete().eq('id', id);
         if (existingIndex != -1) _entries.removeAt(existingIndex);
         notifyListeners();
@@ -537,15 +551,11 @@ class EntryService extends ChangeNotifier {
   /// Returns a quiet, archival "resurfacing" list of entries that feel like
   /// "you've been here before".
   ///
-  /// Matching (ONLY):
-  /// - Same book
-  /// - Same chapter
+  /// Matching priority:
+  /// 1) Same chapter
+  /// 2) Fill remaining slots with same book
   ///
-  /// Ordering:
-  /// 1) Highlighted first
-  /// 2) Then remaining
-  ///
-  /// Within each group, items are chronological (oldest -> newest).
+  /// Ordering: oldest -> newest.
   List<JournalEntry> getResurfacingForEntry(String entryId, {int maxItems = 5}) {
     final seed = getEntryById(entryId);
     if (seed == null) return const [];
@@ -582,24 +592,125 @@ class EntryService extends ChangeNotifier {
       return eKey.isNotEmpty && eKey == seedKey;
     }
 
+    // First priority: same chapter.
     addAll(_entries.where(sameBookChapter));
 
-    final filtered = matches.where(sameBookChapter).toList();
+    // Second priority: same book (to fill remaining slots).
+    if (matches.length < maxItems && seedBook.isNotEmpty) {
+      addAll(_entries.where((e) => e.id != entryId && e.book.trim().toLowerCase() == seedBook));
+    }
 
-    int byCreatedAtAsc(JournalEntry a, JournalEntry b) => a.createdAt.compareTo(b.createdAt);
+    matches.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    if (matches.length <= maxItems) return matches;
+    return matches.take(maxItems).toList();
+  }
 
-    final highlighted = filtered.where((e) => e.highlighted).toList()..sort(byCreatedAtAsc);
-    final remaining = filtered.where((e) => !e.highlighted).toList()..sort(byCreatedAtAsc);
+  /// Related entries for the "Saved" confirmation view.
+  ///
+  /// Priority:
+  /// 1) Same Book + Same Chapter
+  /// 2) Same Topic
+  /// 3) Same Book (oldest entries first)
+  ///
+  /// Ordering: oldest -> newest, so the list highlights long-term growth.
+  List<JournalEntry> getRelatedForSavedEntry(String entryId, {int limit = 5}) {
+    final seed = getEntryById(entryId);
+    if (seed == null) return const [];
 
-    final ordered = [...highlighted, ...remaining];
-    if (ordered.length <= maxItems) return ordered;
-    return ordered.take(maxItems).toList();
+    final results = <JournalEntry>[];
+    final seen = <String>{entryId};
+
+    bool add(JournalEntry e) {
+      if (seen.add(e.id)) {
+        results.add(e);
+        return true;
+      }
+      return false;
+    }
+
+    String norm(String s) => s.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+    final seedChapterKey = norm(seed.chapterKey);
+    final seedBook = seed.book.trim().toLowerCase();
+    final seedTopic = normalizeTopic(seed.topic).trim().toLowerCase();
+
+    final sameChapter = _entries.where((e) {
+      if (seen.contains(e.id)) return false;
+      final ck = norm(e.chapterKey);
+      if (seedChapterKey.isEmpty || ck.isEmpty) return false;
+      return ck == seedChapterKey;
+    }).toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    for (final e in sameChapter) {
+      if (results.length >= limit) return results;
+      add(e);
+    }
+
+    final sameTopic = _entries.where((e) {
+      if (seen.contains(e.id)) return false;
+      final t = normalizeTopic(e.topic).trim().toLowerCase();
+      if (seedTopic.isEmpty || t.isEmpty) return false;
+      return t == seedTopic;
+    }).toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    for (final e in sameTopic) {
+      if (results.length >= limit) return results;
+      add(e);
+    }
+
+    if (seedBook.isNotEmpty) {
+      final sameBook = _entries.where((e) {
+        if (seen.contains(e.id)) return false;
+        return e.book.trim().toLowerCase() == seedBook;
+      }).toList()
+        ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      for (final e in sameBook) {
+        if (results.length >= limit) return results;
+        add(e);
+      }
+    }
+
+    return results;
   }
 
   List<String> getAllTopics() {
-    final topics = _entries.map((e) => e.topic).toSet().toList();
-    topics.sort();
+    final topics = _entries
+        .map((e) => canonicalizeTopic(e.topic))
+        .where((t) => t.trim().isNotEmpty)
+        .toSet()
+        .toList();
+    topics.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
     return topics;
+  }
+
+  /// Normalizes a topic so casing/spacing stays consistent over time.
+  ///
+  /// - trims
+  /// - collapses whitespace
+  /// - Title Cases each word
+  String normalizeTopic(String raw) {
+    final trimmed = raw.trim().replaceAll(RegExp(r'\s+'), ' ');
+    if (trimmed.isEmpty) return '';
+    return trimmed
+        .split(' ')
+        .map((w) {
+          if (w.isEmpty) return w;
+          final lower = w.toLowerCase();
+          return '${lower[0].toUpperCase()}${lower.substring(1)}';
+        })
+        .join(' ');
+  }
+
+  /// Returns the canonical stored topic casing if it already exists; otherwise
+  /// returns a normalized new topic.
+  String canonicalizeTopic(String raw) {
+    final normalized = normalizeTopic(raw);
+    if (normalized.isEmpty) return '';
+    final key = normalized.toLowerCase();
+    for (final e in _entries) {
+      final existing = normalizeTopic(e.topic);
+      if (existing.isNotEmpty && existing.toLowerCase() == key) return existing;
+    }
+    return normalized;
   }
 
   List<String> getAllBooks() {

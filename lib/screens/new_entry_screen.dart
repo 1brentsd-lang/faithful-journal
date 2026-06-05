@@ -9,6 +9,7 @@ import 'package:faithful_journal/services/unsaved_changes_service.dart';
 import 'package:faithful_journal/nav.dart';
 import 'package:faithful_journal/theme.dart';
 import 'package:faithful_journal/widgets/app_journal_text_field.dart';
+import 'package:faithful_journal/widgets/auth_required_sheet.dart';
 import 'package:faithful_journal/widgets/discard_changes_dialog.dart';
 
 class NewEntryScreen extends StatefulWidget {
@@ -27,8 +28,8 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
   final _scriptureController = TextEditingController();
   final _scriptureTextController = TextEditingController();
   final _observationController = TextEditingController();
-  final _obsBeforeController = TextEditingController();
-  final _obsAfterController = TextEditingController();
+  final _contextAroundController = TextEditingController();
+  final _contextStandOutController = TextEditingController();
   final _applicationController = TextEditingController();
   final _prayerController = TextEditingController();
   final _topicController = TextEditingController();
@@ -44,6 +45,8 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
 
   bool _isEditing = false;
   JournalEntry? _existingEntry;
+
+  bool _contextExpanded = false;
 
   UnsavedChangesService? _unsavedChanges;
 
@@ -65,8 +68,8 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
     _scriptureTextController.addListener(_markDirty);
     _scriptureController.addListener(_markDirty);
     _observationController.addListener(_markDirty);
-    _obsBeforeController.addListener(_markDirty);
-    _obsAfterController.addListener(_markDirty);
+    _contextAroundController.addListener(_markDirty);
+    _contextStandOutController.addListener(_markDirty);
     _applicationController.addListener(_markDirty);
     _prayerController.addListener(_markDirty);
     _topicController.addListener(_markDirty);
@@ -100,15 +103,45 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
       _scriptureTextController.text = _existingEntry!.scriptureText ?? '';
       _observationController.text = _existingEntry!.observation;
       final structured = _existingEntry!.observationStructured;
-      if (structured != null) {
-        _obsBeforeController.text = structured.leadingContext;
-        _obsAfterController.text = structured.followingContext;
-      }
+      if (structured != null) _hydrateContextFromStored(structured);
       _applicationController.text = _existingEntry!.application;
       _prayerController.text = _existingEntry!.prayer;
       _topicController.text = _existingEntry!.topic;
       _suspendDirty = false;
     }
+  }
+
+  void _hydrateContextFromStored(ObservationStructured structured) {
+    // Backwards compatible:
+    // - Older data: before_passage/after_passage stored as plain text.
+    // - New UI: we store a small labeled block inside leadingContext.
+    final raw = structured.leadingContext.trim();
+    final lines = raw.split('\n').map((l) => l.trimRight()).toList();
+    final map = <String, String>{};
+    for (final line in lines) {
+      final idx = line.indexOf(':');
+      if (idx <= 0) continue;
+      final key = line.substring(0, idx).trim().toLowerCase();
+      final value = line.substring(idx + 1).trim();
+      if (value.isEmpty) continue;
+      map[key] = value;
+    }
+
+    // Previous UI stored a small labeled block in leadingContext.
+    final around = map["what's happening"] ?? '';
+    if (around.trim().isNotEmpty) {
+      _contextAroundController.text = around;
+    } else {
+      // Old format fallback.
+      _contextAroundController.text = raw;
+    }
+
+    // Older data may have placed the "after" field in followingContext.
+    // We gently migrate that into the new "stands out" prompt if needed.
+    final legacyStandOut = structured.standOut.trim().isNotEmpty
+        ? structured.standOut.trim()
+        : structured.followingContext.trim();
+    _contextStandOutController.text = legacyStandOut;
   }
 
   @override
@@ -120,8 +153,8 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
     _scriptureController.dispose();
     _scriptureTextController.dispose();
     _observationController.dispose();
-    _obsBeforeController.dispose();
-    _obsAfterController.dispose();
+    _contextAroundController.dispose();
+    _contextStandOutController.dispose();
     _applicationController.dispose();
     _prayerController.dispose();
     _topicController.dispose();
@@ -153,12 +186,36 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
 
   ObservationStructured _buildObservationStructured() {
     String clean(String s) => s.trim();
+    final around = clean(_contextAroundController.text);
+    final standOut = clean(_contextStandOutController.text);
     return ObservationStructured(
-      leadingContext: clean(_obsBeforeController.text),
-      followingContext: clean(_obsAfterController.text),
-      standOut: '',
+      leadingContext: around,
+      followingContext: '',
+      standOut: standOut,
       repeatedIdeas: '',
     );
+  }
+
+  Future<bool> _ensureSignedInOrPrompt() async {
+    final entryService = context.read<EntryService>();
+    await entryService.ensureAuthenticated();
+    if (!(entryService.isUsingSupabase && entryService.needsAuth)) return true;
+    if (!mounted) return false;
+
+    final ok = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => AuthRequiredSheet(
+        onAuthenticated: () {
+          context.read<EntryService>().refresh();
+        },
+      ),
+    );
+    if (!mounted) return false;
+    if (ok == true) return true;
+    // If the user dismissed the sheet, re-check session.
+    return !(entryService.isUsingSupabase && entryService.needsAuth);
   }
 
   Future<void> _importScripture() async {
@@ -212,7 +269,9 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
 
     final entryService = context.read<EntryService>();
     try {
-      await entryService.ensureAuthenticated();
+      final ok = await _ensureSignedInOrPrompt();
+      if (!ok) return;
+
       debugPrint('NewEntryScreen: ensureAuthenticated complete. supabaseUserId=${entryService.supabaseUserId}');
       final now = DateTime.now();
 
@@ -266,18 +325,13 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
       }
 
       if (mounted) {
-        // Stability-first: keep navigation simple after save.
-        // Going directly to the Entry Detail route from within the tab shell
-        // has been a source of brittle lifecycle timing on web (disposed
-        // widgets + snackbars + route transitions). For export testing we land
-        // back on Archive reliably.
         (_unsavedChanges ?? context.read<UnsavedChangesService>()).clear(_unsavedKey);
         _isDirty = false;
 
         // Use next-frame navigation to avoid overlay/route animation assertions.
         SchedulerBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          context.go(AppRoutes.home);
+          context.go('/saved-entry/$savedId');
         });
       }
     } catch (e) {
@@ -295,6 +349,7 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
   @override
   Widget build(BuildContext context) {
     final sectionTint = Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45);
+    final entryService = context.watch<EntryService>();
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) async {
@@ -317,19 +372,64 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                Text(
-                  'Scripture Reference',
-                  style: context.textStyles.titleMedium,
-                ),
+                Text('Passage', style: context.textStyles.titleMedium),
                 const SizedBox(height: AppSpacing.sm),
-                TextFormField(
-                  controller: _scriptureController,
-                  decoration: const InputDecoration(hintText: 'e.g. John 3:16 or Psalm 23:1-3'),
-                  validator: (value) {
-                    if (value == null || value.trim().isEmpty) {
-                      return 'Please enter a Scripture reference';
+                Autocomplete<String>(
+                  optionsBuilder: (value) {
+                    final q = value.text.trim().toLowerCase();
+                    if (q.isEmpty) return const Iterable<String>.empty();
+
+                    final hasDigits = RegExp(r'\d').hasMatch(q);
+                    final chapterKeys = entryService.getAllChapterKeys();
+                    final fromHistory = chapterKeys.where((k) => k.toLowerCase().contains(q)).take(8);
+
+                    // Provide gentle starter suggestions from canonical books.
+                    final fromBooks = <String>[];
+                    for (final book in BibleService.canonicalBooks) {
+                      final lower = book.toLowerCase();
+                      if (!lower.startsWith(q)) continue;
+                      if (hasDigits) {
+                        // If the user already typed digits, don't fight their input.
+                        fromBooks.add(value.text.trim());
+                      } else if (lower == 'psalm' || lower == 'psalms') {
+                        fromBooks.addAll(['Psalm 23', 'Psalm 1', 'Psalm 91', 'Psalm 121']);
+                      } else {
+                        fromBooks.addAll(List.generate(5, (i) => '$book ${i + 1}'));
+                      }
+                      break;
                     }
-                    return null;
+
+                    final merged = <String>[];
+                    for (final s in fromHistory) {
+                      if (!merged.any((m) => m.toLowerCase() == s.toLowerCase())) merged.add(s);
+                    }
+                    for (final s in fromBooks) {
+                      if (s.trim().isEmpty) continue;
+                      if (!merged.any((m) => m.toLowerCase() == s.toLowerCase())) merged.add(s);
+                    }
+                    return merged.take(10);
+                  },
+                  onSelected: (selection) {
+                    final text = selection.trim();
+                    _scriptureController.value = TextEditingValue(
+                      text: text,
+                      selection: TextSelection.collapsed(offset: text.length),
+                    );
+                    _markDirty();
+                  },
+                  fieldViewBuilder: (context, textController, focusNode, onFieldSubmitted) {
+                    // Force Autocomplete to use our controller so the rest of
+                    // the screen (import/save/parse) reads one source of truth.
+                    return TextFormField(
+                      controller: _scriptureController,
+                      focusNode: focusNode,
+                      decoration: const InputDecoration(hintText: 'Start typing… Psalm 23, John 3, Romans 8'),
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) return 'Please enter a passage';
+                        return null;
+                      },
+                      onFieldSubmitted: (_) => onFieldSubmitted(),
+                    );
                   },
                 ),
                 const SizedBox(height: AppSpacing.sm),
@@ -380,46 +480,46 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                   maxLines: 6,
                 ),
                 const SizedBox(height: AppSpacing.lg),
-                Text(
-                  'Context',
-                  style: context.textStyles.labelLarge?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
                 Container(
-                  padding: const EdgeInsets.all(AppSpacing.md),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.30),
                     borderRadius: BorderRadius.circular(AppRadius.lg),
+                    border: Border.all(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.10)),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      AppJournalTextField(
-                        controller: _obsBeforeController,
-                        decoration: const InputDecoration(
-                          labelText: 'Before Passage',
-                          hintText: 'What leads into this?',
-                        ),
-                        style: context.textStyles.bodyMedium,
-                        minLines: 2,
-                        maxLines: 2,
+                  child: Theme(
+                    data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                    child: ExpansionTile(
+                      initiallyExpanded: _contextExpanded,
+                      onExpansionChanged: (v) => setState(() => _contextExpanded = v),
+                      tilePadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 6),
+                      childrenPadding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.md),
+                      title: Text(
+                        'Context (Optional)',
+                        style: context.textStyles.labelLarge?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
                       ),
-                      const SizedBox(height: AppSpacing.md),
-                      AppJournalTextField(
-                        controller: _obsAfterController,
-                        decoration: const InputDecoration(
-                          labelText: 'After Passage',
-                          hintText: 'What follows?',
+                      children: [
+                        AppJournalTextField(
+                          controller: _contextAroundController,
+                          decoration: const InputDecoration(
+                            labelText: "What's happening around this passage?",
+                            hintText: 'A sentence or two is enough…',
+                          ),
+                          minLines: 2,
+                          maxLines: 4,
+                          style: context.textStyles.bodyMedium,
                         ),
-                        style: context.textStyles.bodyMedium,
-                        minLines: 2,
-                        maxLines: 2,
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      // Author/Audience removed to keep the observation flow quieter.
-                    ],
+                        const SizedBox(height: AppSpacing.md),
+                        AppJournalTextField(
+                          controller: _contextStandOutController,
+                          decoration: const InputDecoration(
+                            labelText: 'What stands out in the surrounding context?',
+                          ),
+                          minLines: 2,
+                          maxLines: 4,
+                          style: context.textStyles.bodyMedium,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.lg),
@@ -513,18 +613,36 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      TextFormField(
-                        controller: _topicController,
-                        textCapitalization: TextCapitalization.words,
-                        autocorrect: true,
-                        enableSuggestions: true,
-                        smartDashesType: SmartDashesType.enabled,
-                        smartQuotesType: SmartQuotesType.enabled,
-                        decoration: const InputDecoration(hintText: 'e.g. Faith, Grace, Trust'),
-                        validator: (value) {
-                          if (value == null || value.trim().isEmpty) return 'Please add a topic';
-                          return null;
+                      Autocomplete<String>(
+                        optionsBuilder: (value) {
+                          final q = value.text.trim().toLowerCase();
+                          if (q.isEmpty) return const Iterable<String>.empty();
+                          return entryService
+                              .getAllTopics()
+                              .where((t) => t.toLowerCase().contains(q))
+                              .take(12);
                         },
+                        onSelected: (selection) {
+                          final canonical = entryService.canonicalizeTopic(selection);
+                          _topicController.value = TextEditingValue(
+                            text: canonical,
+                            selection: TextSelection.collapsed(offset: canonical.length),
+                          );
+                          _markDirty();
+                        },
+                        fieldViewBuilder: (context, textController, focusNode, onFieldSubmitted) => TextFormField(
+                          controller: _topicController,
+                          focusNode: focusNode,
+                          textCapitalization: TextCapitalization.words,
+                          autocorrect: true,
+                          enableSuggestions: true,
+                          decoration: const InputDecoration(hintText: 'Start typing… Faith, Trust, Prayer, Hope'),
+                          validator: (value) {
+                            if (value == null || value.trim().isEmpty) return 'Please add a topic';
+                            return null;
+                          },
+                          onFieldSubmitted: (_) => onFieldSubmitted(),
+                        ),
                       ),
                       const SizedBox(height: AppSpacing.md),
                       const _QuietPrompts(

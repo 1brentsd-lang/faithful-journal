@@ -7,6 +7,7 @@ import 'package:faithful_journal/services/entry_service.dart';
 import 'package:faithful_journal/services/unsaved_changes_service.dart';
 import 'package:faithful_journal/theme.dart';
 import 'package:faithful_journal/widgets/app_journal_text_field.dart';
+import 'package:faithful_journal/widgets/auth_required_sheet.dart';
 import 'package:faithful_journal/widgets/discard_changes_dialog.dart';
 
 class QuestionEditorScreen extends StatefulWidget {
@@ -162,6 +163,23 @@ class _QuestionEditorScreenState extends State<QuestionEditorScreen> {
 
     try {
       await entryService.ensureAuthenticated();
+
+      if (entryService.isUsingSupabase && entryService.needsAuth) {
+        if (!mounted) return;
+        await showModalBottomSheet<void>(
+          context: context,
+          isScrollControlled: true,
+          showDragHandle: true,
+          builder: (context) => AuthRequiredSheet(
+            onAuthenticated: () {
+              context.read<EntryService>().refresh();
+            },
+          ),
+        );
+        if (!mounted) return;
+        if (entryService.needsAuth) return;
+      }
+
       final now = DateTime.now();
 
       if (_isEditing && _existing != null) {

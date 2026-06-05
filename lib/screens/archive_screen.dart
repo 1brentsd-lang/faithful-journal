@@ -7,6 +7,8 @@ import 'package:faithful_journal/widgets/entry_card.dart';
 import 'package:faithful_journal/widgets/app_filter_chip.dart';
 import 'package:faithful_journal/widgets/filter_panel.dart';
 import 'package:faithful_journal/theme.dart';
+import 'package:faithful_journal/widgets/auth_required_sheet.dart';
+import 'package:faithful_journal/widgets/account_sheet.dart';
 
 class ArchiveScreen extends StatefulWidget {
   const ArchiveScreen({super.key});
@@ -28,10 +30,75 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Archive'),
+        actions: [
+          IconButton(
+            tooltip: 'Account',
+            icon: const Icon(Icons.account_circle),
+            onPressed: () async {
+              await showModalBottomSheet<void>(
+                context: context,
+                isScrollControlled: true,
+                showDragHandle: true,
+                builder: (_) => const AccountSheet(),
+              );
+            },
+          ),
+        ],
       ),
       body: SafeArea(
         child: Consumer<EntryService>(
           builder: (context, entryService, _) {
+            if (entryService.isUsingSupabase && entryService.needsAuth) {
+              return Center(
+                child: Padding(
+                  padding: AppSpacing.paddingXl,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.lock_outline,
+                        size: 64,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
+                      Text(
+                        'Sign in to view your private journal',
+                        style: context.textStyles.titleLarge?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Text(
+                        'Your Archive is protected by Supabase Row Level Security.',
+                        style: context.textStyles.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
+                      FilledButton.icon(
+                        onPressed: () async {
+                          await showModalBottomSheet<void>(
+                            context: context,
+                            isScrollControlled: true,
+                            showDragHandle: true,
+                            builder: (_) => AuthRequiredSheet(
+                              onAuthenticated: () {
+                                context.read<EntryService>().refresh();
+                              },
+                            ),
+                          );
+                        },
+                        icon: Icon(Icons.email, color: Theme.of(context).colorScheme.onPrimary),
+                        label: const Text('Sign in with email link'),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
             final allTopics = entryService.getAllTopics();
             final allChapters = entryService.getAllChapterKeys();
             
@@ -52,16 +119,24 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
             }
             
             if (_selectedTopic != null) {
-              filteredEntries = filteredEntries.where((e) => e.topic == _selectedTopic).toList();
+              final selectedLower = _selectedTopic!.trim().toLowerCase();
+              filteredEntries = filteredEntries
+                  .where((e) => entryService.normalizeTopic(e.topic).toLowerCase() == selectedLower)
+                  .toList();
             }
 
             if (_selectedFromChapter != null) {
               filteredEntries = filteredEntries.where((e) => e.chapterKey == _selectedFromChapter).toList();
             }
 
-            // Archive ordering: newest first.
+            // Archive ordering:
+            // 1) Highlighted entries at the top
+            // 2) Oldest -> newest (so growth over time is visible)
             // (Safe because `filteredEntries` is always a growable list.)
-            filteredEntries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+            filteredEntries.sort((a, b) {
+              if (a.highlighted != b.highlighted) return a.highlighted ? -1 : 1;
+              return a.createdAt.compareTo(b.createdAt);
+            });
 
             return Column(
               children: [

@@ -160,6 +160,18 @@ class AppRouter {
           return MaterialPage(child: EntryDetailScreen(entryId: entryId));
         },
       ),
+      GoRoute(
+        path: AppRoutes.savedEntry,
+        name: 'saved-entry',
+        parentNavigatorKey: _rootNavigatorKey,
+        pageBuilder: (context, state) {
+          final entryId = state.pathParameters['id'];
+          if (entryId == null || entryId.isEmpty) {
+            return const MaterialPage(child: _RouteParamMissingScreen(message: 'Missing saved entry id.'));
+          }
+          return MaterialPage(child: EntryDetailScreen(entryId: entryId, isSavedView: true));
+        },
+      ),
     ],
   );
 }
@@ -171,6 +183,7 @@ class AppRoutes {
   static const String editEntry = '/edit-entry/:id';
   static const String archiveLegacy = '/archive';
   static const String entryDetail = '/entry/:id';
+  static const String savedEntry = '/saved-entry/:id';
   static const String search = '/search';
   static const String weeklyReview = '/weekly-review';
   static const String questions = '/questions';

@@ -6,6 +6,7 @@ import 'package:faithful_journal/widgets/entry_card.dart';
 import 'package:faithful_journal/widgets/app_filter_chip.dart';
 import 'package:faithful_journal/widgets/filter_panel.dart';
 import 'package:faithful_journal/theme.dart';
+import 'package:faithful_journal/widgets/auth_required_sheet.dart';
 
 class QuestionsScreen extends StatefulWidget {
   const QuestionsScreen({super.key});
@@ -47,6 +48,55 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
       body: SafeArea(
         child: Consumer<EntryService>(
           builder: (context, entryService, _) {
+            if (entryService.isUsingSupabase && entryService.needsAuth) {
+              return Center(
+                child: Padding(
+                  padding: AppSpacing.paddingXl,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.lock_outline,
+                        size: 64,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
+                      Text(
+                        'Sign in to view your questions',
+                        style: context.textStyles.titleLarge,
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Text(
+                        'Questions are private and tied to your account.',
+                        style: context.textStyles.bodyMedium?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
+                      FilledButton.icon(
+                        onPressed: () async {
+                          await showModalBottomSheet<void>(
+                            context: context,
+                            isScrollControlled: true,
+                            showDragHandle: true,
+                            builder: (_) => AuthRequiredSheet(
+                              onAuthenticated: () {
+                                context.read<EntryService>().refresh();
+                              },
+                            ),
+                          );
+                        },
+                        icon: Icon(Icons.email, color: Theme.of(context).colorScheme.onPrimary),
+                        label: const Text('Sign in with email link'),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
             final questions = entryService.getQuestions(filter: _filter);
             return Column(
               children: [

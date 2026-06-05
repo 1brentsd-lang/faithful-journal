@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 /// A TextFormField tuned for calm, natural long-form journaling.
@@ -40,10 +41,12 @@ class AppJournalTextField extends StatelessWidget {
       keyboardType: TextInputType.multiline,
       textInputAction: TextInputAction.newline,
       textCapitalization: TextCapitalization.sentences,
-      autocorrect: true,
-      enableSuggestions: true,
-      smartDashesType: SmartDashesType.enabled,
-      smartQuotesType: SmartQuotesType.enabled,
+      // Web IME + smart punctuation can cause selection/cursor drift in some
+      // browsers. Prefer stable typing over fancy punctuation.
+      autocorrect: !kIsWeb,
+      enableSuggestions: !kIsWeb,
+      smartDashesType: kIsWeb ? SmartDashesType.disabled : SmartDashesType.enabled,
+      smartQuotesType: kIsWeb ? SmartQuotesType.disabled : SmartQuotesType.enabled,
       minLines: minLines,
       maxLines: maxLines,
       textAlignVertical: TextAlignVertical.top,
