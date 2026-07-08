@@ -121,8 +121,8 @@ class _MemoryGlanceCard extends StatelessWidget {
     final application = clean(entry.application);
     if (application.isNotEmpty) return application;
 
-    final observation = clean(entry.observation);
-    if (observation.isNotEmpty) return observation;
+    final reflection = clean(entry.reflectionText);
+    if (reflection.isNotEmpty) return reflection;
 
     final prayer = clean(entry.prayer);
     if (prayer.isNotEmpty) return prayer;

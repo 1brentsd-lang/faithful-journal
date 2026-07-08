@@ -9,6 +9,7 @@ import 'package:faithful_journal/theme.dart';
 import 'package:faithful_journal/widgets/app_journal_text_field.dart';
 import 'package:faithful_journal/widgets/auth_required_sheet.dart';
 import 'package:faithful_journal/widgets/discard_changes_dialog.dart';
+import 'package:faithful_journal/widgets/app_logo.dart';
 
 class QuestionEditorScreen extends StatefulWidget {
   final String? entryId;
@@ -252,7 +253,7 @@ class _QuestionEditorScreenState extends State<QuestionEditorScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(_isEditing ? 'Edit Question' : 'New Question'),
+          title: AppLogoTitle(_isEditing ? 'Edit Question' : 'New Question'),
           leading: IconButton(icon: const Icon(Icons.close), onPressed: _attemptLeave),
         ),
         body: SafeArea(

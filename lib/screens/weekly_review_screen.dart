@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:faithful_journal/services/entry_service.dart';
 import 'package:faithful_journal/widgets/entry_card.dart';
 import 'package:faithful_journal/theme.dart';
+import 'package:faithful_journal/widgets/app_logo.dart';
 
 class WeeklyReviewScreen extends StatelessWidget {
   const WeeklyReviewScreen({super.key});
@@ -12,7 +13,7 @@ class WeeklyReviewScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Weekly Review'),
+        title: const AppLogoTitle('Weekly Review'),
       ),
       body: SafeArea(
         child: Consumer<EntryService>(

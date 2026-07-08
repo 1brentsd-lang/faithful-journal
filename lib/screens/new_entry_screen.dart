@@ -9,8 +9,10 @@ import 'package:faithful_journal/services/unsaved_changes_service.dart';
 import 'package:faithful_journal/nav.dart';
 import 'package:faithful_journal/theme.dart';
 import 'package:faithful_journal/widgets/app_journal_text_field.dart';
+import 'package:faithful_journal/widgets/searchable_combo_box.dart';
 import 'package:faithful_journal/widgets/auth_required_sheet.dart';
 import 'package:faithful_journal/widgets/discard_changes_dialog.dart';
+import 'package:faithful_journal/widgets/app_logo.dart';
 
 class NewEntryScreen extends StatefulWidget {
   final String? entryId;
@@ -28,8 +30,6 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
   final _scriptureController = TextEditingController();
   final _scriptureTextController = TextEditingController();
   final _observationController = TextEditingController();
-  final _contextAroundController = TextEditingController();
-  final _contextStandOutController = TextEditingController();
   final _applicationController = TextEditingController();
   final _prayerController = TextEditingController();
   final _topicController = TextEditingController();
@@ -45,8 +45,6 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
 
   bool _isEditing = false;
   JournalEntry? _existingEntry;
-
-  bool _contextExpanded = false;
 
   UnsavedChangesService? _unsavedChanges;
 
@@ -68,8 +66,6 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
     _scriptureTextController.addListener(_markDirty);
     _scriptureController.addListener(_markDirty);
     _observationController.addListener(_markDirty);
-    _contextAroundController.addListener(_markDirty);
-    _contextStandOutController.addListener(_markDirty);
     _applicationController.addListener(_markDirty);
     _prayerController.addListener(_markDirty);
     _topicController.addListener(_markDirty);
@@ -102,46 +98,11 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
       _scriptureController.text = _existingEntry!.scriptureReference;
       _scriptureTextController.text = _existingEntry!.scriptureText ?? '';
       _observationController.text = _existingEntry!.observation;
-      final structured = _existingEntry!.observationStructured;
-      if (structured != null) _hydrateContextFromStored(structured);
       _applicationController.text = _existingEntry!.application;
       _prayerController.text = _existingEntry!.prayer;
       _topicController.text = _existingEntry!.topic;
       _suspendDirty = false;
     }
-  }
-
-  void _hydrateContextFromStored(ObservationStructured structured) {
-    // Backwards compatible:
-    // - Older data: before_passage/after_passage stored as plain text.
-    // - New UI: we store a small labeled block inside leadingContext.
-    final raw = structured.leadingContext.trim();
-    final lines = raw.split('\n').map((l) => l.trimRight()).toList();
-    final map = <String, String>{};
-    for (final line in lines) {
-      final idx = line.indexOf(':');
-      if (idx <= 0) continue;
-      final key = line.substring(0, idx).trim().toLowerCase();
-      final value = line.substring(idx + 1).trim();
-      if (value.isEmpty) continue;
-      map[key] = value;
-    }
-
-    // Previous UI stored a small labeled block in leadingContext.
-    final around = map["what's happening"] ?? '';
-    if (around.trim().isNotEmpty) {
-      _contextAroundController.text = around;
-    } else {
-      // Old format fallback.
-      _contextAroundController.text = raw;
-    }
-
-    // Older data may have placed the "after" field in followingContext.
-    // We gently migrate that into the new "stands out" prompt if needed.
-    final legacyStandOut = structured.standOut.trim().isNotEmpty
-        ? structured.standOut.trim()
-        : structured.followingContext.trim();
-    _contextStandOutController.text = legacyStandOut;
   }
 
   @override
@@ -153,8 +114,6 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
     _scriptureController.dispose();
     _scriptureTextController.dispose();
     _observationController.dispose();
-    _contextAroundController.dispose();
-    _contextStandOutController.dispose();
     _applicationController.dispose();
     _prayerController.dispose();
     _topicController.dispose();
@@ -184,17 +143,7 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
     }
   }
 
-  ObservationStructured _buildObservationStructured() {
-    String clean(String s) => s.trim();
-    final around = clean(_contextAroundController.text);
-    final standOut = clean(_contextStandOutController.text);
-    return ObservationStructured(
-      leadingContext: around,
-      followingContext: '',
-      standOut: standOut,
-      repeatedIdeas: '',
-    );
-  }
+  // Context reflection section removed in refinement release.
 
   Future<bool> _ensureSignedInOrPrompt() async {
     final entryService = context.read<EntryService>();
@@ -259,7 +208,7 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
 
   Future<void> _saveEntry() async {
     debugPrint('NewEntryScreen: Save button pressed');
-    final structured = _buildObservationStructured();
+    // Reflection is stored as a single continuous field.
 
     // Stability: formState can be null if a save is triggered during a rebuild
     // or a route transition. Avoid null-assertions to prevent red screens.
@@ -291,7 +240,7 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
           verseEnd: parsed.verseEnd,
           translation: metaTranslation.isEmpty ? null : metaTranslation,
           observation: _observationController.text.trim(),
-          observationStructured: structured,
+          observationStructured: _existingEntry!.observationStructured,
           application: _applicationController.text.trim(),
           prayer: _prayerController.text.trim(),
           topic: _topicController.text.trim(),
@@ -313,7 +262,7 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
           translation: metaTranslation.isEmpty ? null : metaTranslation,
           entryType: JournalEntryType.soap,
           observation: _observationController.text.trim(),
-          observationStructured: structured,
+          observationStructured: null,
           application: _applicationController.text.trim(),
           prayer: _prayerController.text.trim(),
           topic: _topicController.text.trim(),
@@ -358,7 +307,7 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(_isEditing ? 'Edit Entry' : 'New Entry'),
+          title: AppLogoTitle(_isEditing ? 'Edit Entry' : 'New Entry'),
           leading: IconButton(
             icon: const Icon(Icons.close),
             onPressed: _attemptLeave,
@@ -480,62 +429,19 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                   maxLines: 6,
                 ),
                 const SizedBox(height: AppSpacing.lg),
-                Container(
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.30),
-                    borderRadius: BorderRadius.circular(AppRadius.lg),
-                    border: Border.all(color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.10)),
-                  ),
-                  child: Theme(
-                    data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-                    child: ExpansionTile(
-                      initiallyExpanded: _contextExpanded,
-                      onExpansionChanged: (v) => setState(() => _contextExpanded = v),
-                      tilePadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 6),
-                      childrenPadding: const EdgeInsets.fromLTRB(AppSpacing.md, 0, AppSpacing.md, AppSpacing.md),
-                      title: Text(
-                        'Context (Optional)',
-                        style: context.textStyles.labelLarge?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                      ),
-                      children: [
-                        AppJournalTextField(
-                          controller: _contextAroundController,
-                          decoration: const InputDecoration(
-                            labelText: "What's happening around this passage?",
-                            hintText: 'A sentence or two is enough…',
-                          ),
-                          minLines: 2,
-                          maxLines: 4,
-                          style: context.textStyles.bodyMedium,
-                        ),
-                        const SizedBox(height: AppSpacing.md),
-                        AppJournalTextField(
-                          controller: _contextStandOutController,
-                          decoration: const InputDecoration(
-                            labelText: 'What stands out in the surrounding context?',
-                          ),
-                          minLines: 2,
-                          maxLines: 4,
-                          style: context.textStyles.bodyMedium,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.lg),
                 EntrySectionCard(
-                  title: 'Observation',
+                  title: 'Reflection',
                   tint: sectionTint,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       AppJournalTextField(
                         controller: _observationController,
-                        decoration: const InputDecoration(hintText: 'What do you notice?'),
+                        decoration: const InputDecoration(hintText: 'Write your reflection…'),
                         minLines: 6,
                         maxLines: 8,
                         validator: (value) {
-                          if (value == null || value.trim().isEmpty) return 'Please add an observation';
+                          if (value == null || value.trim().isEmpty) return 'Please add a reflection';
                           return null;
                         },
                       ),
@@ -543,8 +449,8 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                       const _QuietPrompts(
                         prompts: [
                           'What is being emphasized?',
-                          'What might be misunderstood?',
-                          'What detail is easy to miss?',
+                          'What might I be missing?',
+                          'What does this reveal about God?',
                         ],
                       ),
                     ],
@@ -613,14 +519,15 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Autocomplete<String>(
-                        optionsBuilder: (value) {
-                          final q = value.text.trim().toLowerCase();
-                          if (q.isEmpty) return const Iterable<String>.empty();
-                          return entryService
-                              .getAllTopics()
-                              .where((t) => t.toLowerCase().contains(q))
-                              .take(12);
+                      SearchableComboBox(
+                        controller: _topicController,
+                        labelText: 'Topic',
+                        hintText: 'Type to search or create a new topic…',
+                        options: entryService.getAllTopics(),
+                        allowCustom: true,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) return 'Please add a topic';
+                          return null;
                         },
                         onSelected: (selection) {
                           final canonical = entryService.canonicalizeTopic(selection);
@@ -630,19 +537,6 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
                           );
                           _markDirty();
                         },
-                        fieldViewBuilder: (context, textController, focusNode, onFieldSubmitted) => TextFormField(
-                          controller: _topicController,
-                          focusNode: focusNode,
-                          textCapitalization: TextCapitalization.words,
-                          autocorrect: true,
-                          enableSuggestions: true,
-                          decoration: const InputDecoration(hintText: 'Start typing… Faith, Trust, Prayer, Hope'),
-                          validator: (value) {
-                            if (value == null || value.trim().isEmpty) return 'Please add a topic';
-                            return null;
-                          },
-                          onFieldSubmitted: (_) => onFieldSubmitted(),
-                        ),
                       ),
                       const SizedBox(height: AppSpacing.md),
                       const _QuietPrompts(

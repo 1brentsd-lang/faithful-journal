@@ -7,6 +7,7 @@ environment:
   sdk: ^3.6.0
 
 dependencies:
+  share_plus: 10.0.2
   # Deployment stability rules:
   # - Prefer pinned (exact) versions over caret ranges to avoid surprise breakages.
   # - Only upgrade dependencies when explicitly requested.
@@ -33,9 +34,12 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/
+    - assets/images/
 
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: assets/icons/dreamflow_icon.jpg
+  image_path: assets/images/FJ_Logo.png
   remove_alpha_ios: true

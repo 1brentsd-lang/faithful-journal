@@ -9,6 +9,8 @@ import 'package:faithful_journal/widgets/filter_panel.dart';
 import 'package:faithful_journal/theme.dart';
 import 'package:faithful_journal/widgets/auth_required_sheet.dart';
 import 'package:faithful_journal/widgets/account_sheet.dart';
+import 'package:faithful_journal/widgets/searchable_combo_box.dart';
+import 'package:faithful_journal/widgets/app_logo.dart';
 
 class ArchiveScreen extends StatefulWidget {
   const ArchiveScreen({super.key});
@@ -25,11 +27,21 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   _ArchiveKind _kind = _ArchiveKind.all;
   QuestionFilter _questionFilter = QuestionFilter.all;
 
+  final _topicController = TextEditingController();
+  final _chapterController = TextEditingController();
+
+  @override
+  void dispose() {
+    _topicController.dispose();
+    _chapterController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Archive'),
+        title: const AppLogoTitle('Archive'),
         actions: [
           IconButton(
             tooltip: 'Account',
@@ -91,7 +103,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                           );
                         },
                         icon: Icon(Icons.email, color: Theme.of(context).colorScheme.onPrimary),
-                        label: const Text('Sign in with email link'),
+                        label: const Text('Sign in with email'),
                       ),
                     ],
                   ),
@@ -129,14 +141,8 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
               filteredEntries = filteredEntries.where((e) => e.chapterKey == _selectedFromChapter).toList();
             }
 
-            // Archive ordering:
-            // 1) Highlighted entries at the top
-            // 2) Oldest -> newest (so growth over time is visible)
-            // (Safe because `filteredEntries` is always a growable list.)
-            filteredEntries.sort((a, b) {
-              if (a.highlighted != b.highlighted) return a.highlighted ? -1 : 1;
-              return a.createdAt.compareTo(b.createdAt);
-            });
+            // Archive ordering (default experience): newest -> oldest.
+            filteredEntries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
             return Column(
               children: [
@@ -201,68 +207,36 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                         if (allTopics.isNotEmpty || allChapters.isNotEmpty) ...[
                           const SizedBox(height: AppSpacing.md),
                           if (allTopics.isNotEmpty) ...[
-                            Text(
-                              'Filter by Topic',
-                              style: context.textStyles.labelMedium?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                            const SizedBox(height: AppSpacing.sm),
-                            SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: Row(
-                                children: [
-                                  AppFilterChip(
-                                    label: 'All Topics',
-                                    isSelected: _selectedTopic == null,
-                                    onSelected: (_) => setState(() => _selectedTopic = null),
-                                  ),
-                                  const SizedBox(width: AppSpacing.sm),
-                                  ...allTopics.map(
-                                    (topic) => Padding(
-                                      padding: const EdgeInsets.only(right: AppSpacing.sm),
-                                      child: AppFilterChip(
-                                        label: topic,
-                                        isSelected: _selectedTopic == topic,
-                                        onSelected: (_) => setState(() => _selectedTopic = topic),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                            SearchableComboBox(
+                              controller: _topicController,
+                              labelText: 'Topic',
+                              hintText: 'Type to filter topics…',
+                              options: allTopics,
+                              allowCustom: false,
+                              onSelected: (topic) {
+                                setState(() {
+                                  _selectedTopic = topic;
+                                  _topicController.text = topic;
+                                });
+                              },
+                              onCleared: () => setState(() => _selectedTopic = null),
                             ),
                           ],
                           if (allChapters.isNotEmpty) ...[
                             const SizedBox(height: AppSpacing.md),
-                            Text(
-                              'From Book & Chapter',
-                              style: context.textStyles.labelMedium?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                            const SizedBox(height: AppSpacing.sm),
-                            SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              child: Row(
-                                children: [
-                                  AppFilterChip(
-                                    label: 'All',
-                                    isSelected: _selectedFromChapter == null,
-                                    onSelected: (_) => setState(() => _selectedFromChapter = null),
-                                  ),
-                                  const SizedBox(width: AppSpacing.sm),
-                                  ...allChapters.map(
-                                    (chapterKey) => Padding(
-                                      padding: const EdgeInsets.only(right: AppSpacing.sm),
-                                      child: AppFilterChip(
-                                        label: chapterKey,
-                                        isSelected: _selectedFromChapter == chapterKey,
-                                        onSelected: (_) => setState(() => _selectedFromChapter = chapterKey),
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
+                            SearchableComboBox(
+                              controller: _chapterController,
+                              labelText: 'Book & Chapter',
+                              hintText: 'Type to filter… (e.g., John 3)',
+                              options: allChapters,
+                              allowCustom: false,
+                              onSelected: (chapterKey) {
+                                setState(() {
+                                  _selectedFromChapter = chapterKey;
+                                  _chapterController.text = chapterKey;
+                                });
+                              },
+                              onCleared: () => setState(() => _selectedFromChapter = null),
                             ),
                           ],
                         ],

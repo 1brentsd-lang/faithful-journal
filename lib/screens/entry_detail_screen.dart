@@ -8,7 +8,10 @@ import 'package:faithful_journal/services/entry_service.dart';
 import 'package:faithful_journal/widgets/resurfacing_section.dart';
 import 'package:faithful_journal/widgets/related_entries_list.dart';
 import 'package:faithful_journal/widgets/auth_required_sheet.dart';
+import 'package:faithful_journal/widgets/share_entry_sheet.dart';
 import 'package:faithful_journal/theme.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:faithful_journal/widgets/app_logo.dart';
 
 class EntryDetailScreen extends StatelessWidget {
   final String entryId;
@@ -34,7 +37,7 @@ class EntryDetailScreen extends StatelessWidget {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: isSavedView ? const Text('Saved Entry') : null,
+          title: AppLogoTitle(isSavedView ? 'Saved Entry' : 'Entry'),
           automaticallyImplyLeading: false,
           leadingWidth: 96,
           leading: Padding(
@@ -53,6 +56,36 @@ class EntryDetailScreen extends StatelessWidget {
             ),
           ),
           actions: [
+            IconButton(
+              tooltip: 'Share',
+              icon: const Icon(Icons.ios_share),
+              onPressed: () async {
+                final entry = context.read<EntryService>().getEntryById(entryId);
+                if (entry == null) return;
+
+                if (entry.isQuestion) {
+                  final parts = <String>[];
+                  final ref = entry.scriptureReference.trim();
+                  if (ref.isNotEmpty) parts.add(ref);
+                  final q = (entry.question ?? '').trim();
+                  if (q.isNotEmpty) parts.add(q);
+                  final understand = (entry.beginningToUnderstand ?? '').trim();
+                  if (understand.isNotEmpty) parts.add("What I’m Beginning to Understand\n$understand");
+                  final text = parts.where((p) => p.trim().isNotEmpty).join('\n\n');
+                  if (text.trim().isEmpty) return;
+                  await Share.share(text);
+                  return;
+                }
+
+                if (!context.mounted) return;
+                await showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  showDragHandle: true,
+                  builder: (_) => ShareEntrySheet(entry: entry),
+                );
+              },
+            ),
             if (!isSavedView) ...[
               IconButton(
                 icon: const Icon(Icons.edit),
@@ -234,9 +267,18 @@ class EntryDetailScreen extends StatelessWidget {
                       ),
                     ),
                   ] else ...[
-                    SectionHeader(title: 'Observation', icon: Icons.visibility),
-                    const SizedBox(height: AppSpacing.md),
-                    ObservationBody(entry: entry),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+                        borderRadius: BorderRadius.circular(AppRadius.lg),
+                      ),
+                      child: Text(
+                        entry.reflectionText.trim().isEmpty ? '—' : entry.reflectionText.trim(),
+                        style: context.textStyles.bodyLarge?.copyWith(height: 1.65),
+                      ),
+                    ),
                     const SizedBox(height: AppSpacing.xl),
                     SectionHeader(title: 'Application', icon: Icons.lightbulb),
                     const SizedBox(height: AppSpacing.md),
@@ -248,16 +290,15 @@ class EntryDetailScreen extends StatelessWidget {
                   ],
                   const SizedBox(height: AppSpacing.xxl),
                   if (isSavedView) ...[
-                    RelatedEntriesList(title: 'Related Entries', entries: relatedForSaved),
+                    RelatedEntriesList(title: 'Related Reflections', entries: relatedForSaved),
                     const SizedBox(height: AppSpacing.xxl),
                   ],
-                  ResurfacingSection(
-                    title: isSavedView ? 'Previous Reflections' : 'Previous Reflections',
-                    subtitle: entry.chapterKey.trim().isEmpty
-                        ? 'A few quiet memories to revisit.'
-                        : 'From ${entry.chapterKey.trim()}',
-                    items: resurfacing,
-                  ),
+                  if (!isSavedView)
+                    ResurfacingSection(
+                      title: 'Related Reflections',
+                      subtitle: null,
+                      items: resurfacing,
+                    ),
                 ],
               ),
             );
@@ -394,79 +435,5 @@ class SectionHeader extends StatelessWidget {
         ),
       ],
     );
-  }
-}
-
-class ObservationBody extends StatelessWidget {
-  final JournalEntry entry;
-
-  const ObservationBody({super.key, required this.entry});
-
-  @override
-  Widget build(BuildContext context) {
-    final s = entry.observationStructured;
-
-    final paragraphs = <String>[];
-    if (s != null) {
-      // Order requested: Before -> After -> Stands out -> Repeated theme.
-      if (s.leadingContext.trim().isNotEmpty) paragraphs.add(_sentence(s.leadingContext, prefix: 'Leading into this passage,'));
-      if (s.followingContext.trim().isNotEmpty) paragraphs.add(_sentence(s.followingContext, prefix: 'Following this section,'));
-      if (s.standOut.trim().isNotEmpty) paragraphs.add(_sentence(s.standOut, prefix: 'What stands out most is'));
-      if (s.repeatedIdeas.trim().isNotEmpty) paragraphs.add(_sentence(s.repeatedIdeas, prefix: 'Repeated ideas include'));
-    }
-
-    // Fallback: if the structured blob exists but is empty (common in imports),
-    // still show the plain observation field.
-    if (paragraphs.isEmpty && entry.observation.trim().isNotEmpty) {
-      paragraphs.add(entry.observation.trim());
-    }
-
-    final metaParts = <String>[];
-    if (entry.book.trim().isNotEmpty) metaParts.add(entry.book.trim());
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(AppSpacing.md),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-          ),
-          child: Text(
-            paragraphs.join('\n\n'),
-            style: context.textStyles.bodyLarge?.copyWith(height: 1.65),
-          ),
-        ),
-        if (metaParts.isNotEmpty) ...[
-          const SizedBox(height: AppSpacing.sm),
-          Text(
-            metaParts.join(' • '),
-            style: context.textStyles.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-              height: 1.4,
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  String _sentence(String text, {required String prefix}) {
-    final t = text.trim();
-    if (t.isEmpty) return '';
-    final lower = t.toLowerCase();
-    final prefixLower = prefix.toLowerCase();
-    final composed = lower.startsWith(prefixLower) ? t : '$prefix $t';
-    return _ensureTerminalPunctuation(composed);
-  }
-
-  String _ensureTerminalPunctuation(String s) {
-    final t = s.trimRight();
-    if (t.isEmpty) return '';
-    final last = t[t.length - 1];
-    if (last == '.' || last == '!' || last == '?' || last == '…') return t;
-    return '$t.';
   }
 }

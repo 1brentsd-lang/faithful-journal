@@ -249,9 +249,41 @@ class JournalEntry {
   String get preview {
     final text = isQuestion
         ? ((question ?? '').trim().isNotEmpty ? (question ?? '').trim() : (beginningToUnderstand ?? '').trim())
-        : (observation.isNotEmpty ? observation : application);
+        : (reflectionText.isNotEmpty ? reflectionText : application);
     if (text.length <= 100) return text;
     return '${text.substring(0, 100)}...';
+  }
+
+  /// A single continuous reflection body for SOAP entries.
+  ///
+  /// Refinement behavior:
+  /// - Observation + any legacy structured context fields are presented as one
+  ///   natural reflection.
+  /// - No headings/prefix sentences are injected.
+  /// - Existing data is preserved by incorporating the legacy fields.
+  String get reflectionText {
+    if (isQuestion) return '';
+    final parts = <String>[];
+    final base = observation.trim();
+    if (base.isNotEmpty) parts.add(base);
+
+    final s = observationStructured;
+    if (s != null) {
+      void add(String v) {
+        final t = v.trim();
+        if (t.isEmpty) return;
+        if (parts.any((p) => p.trim() == t)) return;
+        parts.add(t);
+      }
+
+      // Legacy fields (removed from the UI) are folded into the reflection.
+      add(s.leadingContext);
+      add(s.followingContext);
+      add(s.standOut);
+      add(s.repeatedIdeas);
+    }
+
+    return parts.join('\n\n');
   }
 }
 

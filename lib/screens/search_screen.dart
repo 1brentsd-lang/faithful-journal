@@ -5,6 +5,7 @@ import 'package:faithful_journal/models/journal_entry.dart';
 import 'package:faithful_journal/services/entry_service.dart';
 import 'package:faithful_journal/widgets/entry_card.dart';
 import 'package:faithful_journal/theme.dart';
+import 'package:faithful_journal/widgets/app_logo.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -45,7 +46,7 @@ class _SearchScreenState extends State<SearchScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Search'),
+        title: const AppLogoTitle('Search'),
       ),
       body: SafeArea(
         child: Column(

@@ -7,6 +7,7 @@ import 'package:faithful_journal/widgets/app_filter_chip.dart';
 import 'package:faithful_journal/widgets/filter_panel.dart';
 import 'package:faithful_journal/theme.dart';
 import 'package:faithful_journal/widgets/auth_required_sheet.dart';
+import 'package:faithful_journal/widgets/app_logo.dart';
 
 class QuestionsScreen extends StatefulWidget {
   const QuestionsScreen({super.key});
@@ -36,7 +37,7 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
           icon: const Icon(Icons.arrow_back),
           tooltip: 'Back',
         ),
-        title: const Text('Questions'),
+        title: const AppLogoTitle('Questions'),
         actions: [
           IconButton(
             icon: const Icon(Icons.add),
@@ -89,7 +90,7 @@ class _QuestionsScreenState extends State<QuestionsScreen> {
                           );
                         },
                         icon: Icon(Icons.email, color: Theme.of(context).colorScheme.onPrimary),
-                        label: const Text('Sign in with email link'),
+                        label: const Text('Sign in with email'),
                       ),
                     ],
                   ),

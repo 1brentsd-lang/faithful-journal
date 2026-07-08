@@ -23,10 +23,15 @@ class SupabaseAuthManager extends AuthManager with AnonymousSignInManager {
     }
   }
 
-  /// Email magic link (OTP) sign-in.
+  /// Email OTP sign-in.
   ///
-  /// Works well for web when anonymous auth is disabled.
-  Future<void> sendMagicLink({required String email}) async {
+  /// Supabase can send an email that contains both:
+  /// - a one-time code the user can type in
+  /// - (optionally) a magic link
+  ///
+  /// On iOS/Safari, relying on Apple Mail opening a deep link can be flaky.
+  /// The code-based flow is the most reliable cross-app experience.
+  Future<void> sendEmailOtp({required String email}) async {
     try {
       // Use an explicit callback route so the app can reliably complete the
       // code → session exchange on web.
@@ -36,12 +41,26 @@ class SupabaseAuthManager extends AuthManager with AnonymousSignInManager {
         // On web, Supabase appends `?code=...` (PKCE) and/or other auth params.
         // We handle this in AuthCallbackScreen.
         emailRedirectTo: redirectTo,
+        shouldCreateUser: true,
       );
     } catch (e) {
-      debugPrint('Supabase sendMagicLink failed: $e');
+      debugPrint('Supabase sendEmailOtp failed: $e');
       rethrow;
     }
   }
+
+  Future<void> verifyEmailOtp({required String email, required String token}) async {
+    try {
+      await _client.auth.verifyOTP(email: email, token: token, type: OtpType.email);
+    } catch (e) {
+      debugPrint('Supabase verifyEmailOtp failed: $e');
+      rethrow;
+    }
+  }
+
+  /// Backwards-compatible alias.
+  @Deprecated('Use sendEmailOtp + verifyEmailOtp for the most reliable flow.')
+  Future<void> sendMagicLink({required String email}) => sendEmailOtp(email: email);
 
   @override
   Future signOut() async {

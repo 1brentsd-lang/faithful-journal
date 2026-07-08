@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:faithful_journal/auth/supabase_auth_manager.dart';
 import 'package:faithful_journal/services/entry_service.dart';
@@ -49,7 +50,7 @@ class _AccountSheetState extends State<AccountSheet> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Signed out'), behavior: SnackBarBehavior.floating),
       );
-      Navigator.of(context).pop(true);
+      if (context.mounted) context.pop(true);
     } catch (e) {
       debugPrint('AccountSheet: signOut failed: $e');
       if (!mounted) return;
@@ -71,7 +72,7 @@ class _AccountSheetState extends State<AccountSheet> {
       ),
     );
     if (!mounted) return;
-    if (ok == true) Navigator.of(context).pop(true);
+    if (ok == true) context.pop(true);
   }
 
   @override
@@ -125,7 +126,7 @@ class _AccountSheetState extends State<AccountSheet> {
                         ? FilledButton.icon(
                             onPressed: _signIn,
                             icon: Icon(Icons.email, color: cs.onPrimary),
-                            label: const Text('Sign in with email link'),
+                            label: const Text('Sign in with email'),
                           )
                         : OutlinedButton.icon(
                             onPressed: _signOut,

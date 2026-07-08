@@ -73,19 +73,87 @@ class EntryService extends ChangeNotifier {
         _useSupabase = true;
         _bindAuthListenerIfNeeded();
         await _loadEntriesFromSupabase();
+        await _migrateLegacyReflectionIfNeeded();
         await _backfillScriptureMetadataIfNeeded();
       } else {
         _useSupabase = false;
         await _loadEntriesFromLocal();
+        await _migrateLegacyReflectionIfNeeded();
         await _backfillScriptureMetadataIfNeeded();
       }
     } catch (e) {
       debugPrint('Failed to load entries: $e');
       await _loadEntriesFromLocal();
+      await _migrateLegacyReflectionIfNeeded();
       await _backfillScriptureMetadataIfNeeded();
     } finally {
       _isLoading = false;
       notifyListeners();
+    }
+  }
+
+  /// Migrates older "Context" + "Observation" structured fields into a single
+  /// continuous reflection text.
+  ///
+  /// This is a data-preserving migration:
+  /// - All legacy text is retained.
+  /// - New writes no longer persist structured context columns.
+  Future<void> _migrateLegacyReflectionIfNeeded() async {
+    if (_entries.isEmpty) return;
+
+    final changedIds = <String>[];
+
+    JournalEntry migrate(JournalEntry e) {
+      final s = e.observationStructured;
+      if (s == null) return e;
+
+      final parts = <String>[];
+      void add(String v) {
+        final t = v.trim();
+        if (t.isNotEmpty) parts.add(t);
+      }
+
+      // Preserve legacy ordering, but without headings.
+      add(s.leadingContext);
+      add(s.followingContext);
+      add(s.standOut);
+      add(s.repeatedIdeas);
+
+      final base = e.observation.trim();
+      if (base.isNotEmpty) add(base);
+
+      final merged = parts.isEmpty ? base : parts.join('\n\n');
+      changedIds.add(e.id);
+      return e.copyWith(observation: merged, observationStructured: null);
+    }
+
+    if (_entries.every((e) => e.observationStructured == null)) return;
+
+    final migrated = _entries.map(migrate).toList();
+    _entries = migrated;
+    notifyListeners();
+
+    if (!_useSupabase) {
+      await _saveEntries();
+      return;
+    }
+
+    // Best-effort: persist to Supabase once per entry (requires session).
+    if (_supabase == null || needsAuth) return;
+    try {
+      for (final id in changedIds.take(50)) {
+        final e = migrated.firstWhere((x) => x.id == id);
+        await _updateJournalEntryWithSchemaFallback(id, {
+          'observation': e.observation,
+          // Clear legacy columns if they exist.
+          'before_passage': null,
+          'after_passage': null,
+          'observation_structured': null,
+          'updated_at': DateTime.now().toIso8601String(),
+        });
+      }
+    } catch (err) {
+      debugPrint('Supabase reflection migration persistence failed: $err');
     }
   }
 
@@ -357,7 +425,6 @@ class EntryService extends ChangeNotifier {
         if (needsAuth) throw StateError(_authRequiredMessage);
         final ownerId = requireUserId();
 
-        final s = entry.observationStructured;
         final meta = _effectiveScriptureMetadata(entry);
         final insertMap = <String, dynamic>{
           'id': entry.id,
@@ -378,8 +445,6 @@ class EntryService extends ChangeNotifier {
           // DB column name is `resolution` (model field is `beginningToUnderstand`).
           'resolution': entry.beginningToUnderstand,
           'topic': entry.topic,
-          'before_passage': s?.leadingContext,
-          'after_passage': s?.followingContext,
           'created_at': entry.createdAt.toIso8601String(),
           'updated_at': entry.updatedAt.toIso8601String(),
         };
@@ -418,7 +483,6 @@ class EntryService extends ChangeNotifier {
       if (_useSupabase && _supabase != null) {
         try {
           if (needsAuth) throw StateError(_authRequiredMessage);
-          final s = entry.observationStructured;
           final meta = _effectiveScriptureMetadata(entry);
           final updateMap = {
               'entry_type': entry.entryType == JournalEntryType.question ? 'question' : 'soap',
@@ -436,8 +500,6 @@ class EntryService extends ChangeNotifier {
               'question': entry.question,
             'resolution': entry.beginningToUnderstand,
             'topic': entry.topic,
-            'before_passage': s?.leadingContext,
-            'after_passage': s?.followingContext,
             'updated_at': entry.updatedAt.toIso8601String(),
           };
           await _updateJournalEntryWithSchemaFallback(entry.id, updateMap);
@@ -527,7 +589,7 @@ class EntryService extends ChangeNotifier {
       return e.scriptureReference.toLowerCase().contains(lowerQuery) ||
           (e.question ?? '').toLowerCase().contains(lowerQuery) ||
           (e.beginningToUnderstand ?? '').toLowerCase().contains(lowerQuery) ||
-          e.observation.toLowerCase().contains(lowerQuery) ||
+          e.reflectionText.toLowerCase().contains(lowerQuery) ||
           e.application.toLowerCase().contains(lowerQuery) ||
           e.prayer.toLowerCase().contains(lowerQuery) ||
           e.topic.toLowerCase().contains(lowerQuery);
@@ -617,6 +679,9 @@ class EntryService extends ChangeNotifier {
     final seed = getEntryById(entryId);
     if (seed == null) return const [];
 
+    // Saved-entry related list is intended for reflections (SOAP) only.
+    if (seed.entryType != JournalEntryType.soap) return const [];
+
     final results = <JournalEntry>[];
     final seen = <String>{entryId};
 
@@ -629,12 +694,26 @@ class EntryService extends ChangeNotifier {
     }
 
     String norm(String s) => s.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
-    final seedChapterKey = norm(seed.chapterKey);
+    int? parseChapterFromKey(String key) {
+      final m = RegExp(r'(\d+)\s*$').firstMatch(key.trim());
+      if (m == null) return null;
+      return int.tryParse(m.group(1) ?? '');
+    }
     final seedBook = seed.book.trim().toLowerCase();
+    final seedChapter = seed.chapter ?? parseChapterFromKey(seed.chapterKey);
+    final seedChapterKey = norm(seed.chapterKey);
     final seedTopic = normalizeTopic(seed.topic).trim().toLowerCase();
 
     final sameChapter = _entries.where((e) {
       if (seen.contains(e.id)) return false;
+      if (e.entryType != JournalEntryType.soap) return false;
+      final eBook = e.book.trim().toLowerCase();
+      final eChapter = e.chapter ?? parseChapterFromKey(e.chapterKey);
+      if (seedBook.isNotEmpty && seedChapter != null && eBook.isNotEmpty && eChapter != null) {
+        return eBook == seedBook && eChapter == seedChapter;
+      }
+
+      // Fallback: if chapter parsing/book is missing, fall back to exact chapterKey match.
       final ck = norm(e.chapterKey);
       if (seedChapterKey.isEmpty || ck.isEmpty) return false;
       return ck == seedChapterKey;
@@ -647,6 +726,7 @@ class EntryService extends ChangeNotifier {
 
     final sameTopic = _entries.where((e) {
       if (seen.contains(e.id)) return false;
+      if (e.entryType != JournalEntryType.soap) return false;
       final t = normalizeTopic(e.topic).trim().toLowerCase();
       if (seedTopic.isEmpty || t.isEmpty) return false;
       return t == seedTopic;
@@ -660,6 +740,7 @@ class EntryService extends ChangeNotifier {
     if (seedBook.isNotEmpty) {
       final sameBook = _entries.where((e) {
         if (seen.contains(e.id)) return false;
+        if (e.entryType != JournalEntryType.soap) return false;
         return e.book.trim().toLowerCase() == seedBook;
       }).toList()
         ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -725,11 +806,21 @@ class EntryService extends ChangeNotifier {
   List<String> getAllChapterKeys() {
     final keys = _entries.map((e) => e.chapterKey.trim()).where((k) => k.isNotEmpty).toSet().toList();
     keys.sort((a, b) {
-      // Sort by book then numeric chapter when possible.
+      // Sort by canonical Bible order, then numeric chapter.
       final aBook = a.replaceAll(RegExp(r'\s+\d+\b.*$'), '').trim();
       final bBook = b.replaceAll(RegExp(r'\s+\d+\b.*$'), '').trim();
-      final bookCmp = aBook.toLowerCase().compareTo(bBook.toLowerCase());
-      if (bookCmp != 0) return bookCmp;
+
+      int bookIndex(String book) {
+        final lower = book.toLowerCase();
+        for (var i = 0; i < BibleService.canonicalBooks.length; i++) {
+          if (BibleService.canonicalBooks[i].toLowerCase() == lower) return i;
+        }
+        return 9999;
+      }
+
+      final aIdx = bookIndex(aBook);
+      final bIdx = bookIndex(bBook);
+      if (aIdx != bIdx) return aIdx.compareTo(bIdx);
 
       int? parseChapter(String v) {
         final m = RegExp(r'(\d+)\b').firstMatch(v);

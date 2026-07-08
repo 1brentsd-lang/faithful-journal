@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:faithful_journal/widgets/app_logo.dart';
 
 /// Web auth callback page for Supabase email magic-links.
 ///
@@ -71,7 +72,7 @@ class _AuthCallbackScreenState extends State<AuthCallbackScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.lock_outline, color: cs.primary, size: 32),
+              const AppLogo(size: 36, borderRadius: BorderRadius.all(Radius.circular(10))),
               const SizedBox(height: 12),
               Text(
                 _error == null ? 'Signing you in…' : 'Could not sign you in',

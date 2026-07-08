@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:faithful_journal/services/entry_service.dart';
 import 'package:faithful_journal/widgets/entry_card.dart';
 import 'package:faithful_journal/theme.dart';
+import 'package:faithful_journal/widgets/app_logo.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -28,11 +29,19 @@ class HomePage extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Faithful Journal',
-                          style: context.textStyles.headlineLarge?.copyWith(
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
+                        Row(
+                          children: [
+                            const AppLogo(size: 34, borderRadius: BorderRadius.all(Radius.circular(10))),
+                            const SizedBox(width: AppSpacing.sm),
+                            Expanded(
+                              child: Text(
+                                'Faithful Journal',
+                                style: context.textStyles.headlineLarge?.copyWith(
+                                  color: Theme.of(context).colorScheme.primary,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: AppSpacing.xs),
                         Text(

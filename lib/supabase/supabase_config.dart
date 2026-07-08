@@ -10,6 +10,7 @@ class SupabaseConfig {
   static Future<void> initialize() async {
     // Prefer runtime-provided env vars (Dreamflow publish/runtime), but keep
     // the generated constants as a safe fallback.
+    // Note: Dreamflow can provide these via --dart-define at build/publish time.
     const envUrl = String.fromEnvironment('');
     const envAnonKey = String.fromEnvironment('');
 
@@ -60,7 +61,7 @@ class SupabaseService {
 
       return await query;
     } catch (e) {
-      throw _handleDatabaseError('select', table, e);
+      throw Exception(_handleDatabaseError('select', table, e));
     }
   }
 
@@ -79,7 +80,7 @@ class SupabaseService {
 
       return await query.maybeSingle();
     } catch (e) {
-      throw _handleDatabaseError('selectSingle', table, e);
+      throw Exception(_handleDatabaseError('selectSingle', table, e));
     }
   }
 
@@ -91,7 +92,7 @@ class SupabaseService {
     try {
       return await SupabaseConfig.client.from(table).insert(data).select();
     } catch (e) {
-      throw _handleDatabaseError('insert', table, e);
+      throw Exception(_handleDatabaseError('insert', table, e));
     }
   }
 
@@ -103,7 +104,7 @@ class SupabaseService {
     try {
       return await SupabaseConfig.client.from(table).insert(data).select();
     } catch (e) {
-      throw _handleDatabaseError('insertMultiple', table, e);
+      throw Exception(_handleDatabaseError('insertMultiple', table, e));
     }
   }
 
@@ -122,7 +123,7 @@ class SupabaseService {
 
       return await query.select();
     } catch (e) {
-      throw _handleDatabaseError('update', table, e);
+      throw Exception(_handleDatabaseError('update', table, e));
     }
   }
 
@@ -140,7 +141,7 @@ class SupabaseService {
 
       await query;
     } catch (e) {
-      throw _handleDatabaseError('delete', table, e);
+      throw Exception(_handleDatabaseError('delete', table, e));
     }
   }
 
