@@ -3,7 +3,6 @@ import 'package:flutter/scheduler.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'package:faithful_journal/models/journal_entry.dart';
 import 'package:faithful_journal/services/entry_service.dart';
 import 'package:faithful_journal/widgets/resurfacing_section.dart';
 import 'package:faithful_journal/widgets/related_entries_list.dart';
@@ -31,7 +30,7 @@ class EntryDetailScreen extends StatelessWidget {
 
     return PopScope(
       canPop: false,
-      onPopInvoked: (didPop) {
+      onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
         goBackToArchive();
       },

@@ -8,7 +8,8 @@ class AppLogo extends StatelessWidget {
   final double size;
   final BorderRadius borderRadius;
 
-  const AppLogo({super.key, this.size = 22, this.borderRadius = const BorderRadius.all(Radius.circular(6))});
+  /// Default size is slightly larger to better match the new logo proportions.
+  const AppLogo({super.key, this.size = 28, this.borderRadius = const BorderRadius.all(Radius.circular(6))});
 
   static const String assetPath = 'assets/images/FJ_Logo.png';
 
@@ -20,7 +21,7 @@ class AppLogo extends StatelessWidget {
         assetPath,
         width: size,
         height: size,
-        fit: BoxFit.cover,
+        fit: BoxFit.contain,
         errorBuilder: (_, __, ___) => SizedBox(
           width: size,
           height: size,
@@ -42,7 +43,7 @@ class AppLogoTitle extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const AppLogo(size: 20),
+        const AppLogo(size: 26),
         const SizedBox(width: AppSpacing.sm),
         Flexible(child: Text(title, overflow: TextOverflow.ellipsis)),
       ],

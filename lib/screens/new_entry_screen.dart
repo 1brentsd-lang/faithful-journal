@@ -301,7 +301,7 @@ class _NewEntryScreenState extends State<NewEntryScreen> {
     final entryService = context.watch<EntryService>();
     return PopScope(
       canPop: false,
-      onPopInvoked: (didPop) async {
+      onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
         await _attemptLeave();
       },

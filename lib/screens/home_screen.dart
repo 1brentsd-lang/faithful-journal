@@ -31,7 +31,7 @@ class HomePage extends StatelessWidget {
                       children: [
                         Row(
                           children: [
-                            const AppLogo(size: 34, borderRadius: BorderRadius.all(Radius.circular(10))),
+                            const AppLogo(size: 44, borderRadius: BorderRadius.all(Radius.circular(10))),
                             const SizedBox(width: AppSpacing.sm),
                             Expanded(
                               child: Text(

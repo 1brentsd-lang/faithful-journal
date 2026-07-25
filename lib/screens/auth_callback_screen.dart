@@ -72,7 +72,7 @@ class _AuthCallbackScreenState extends State<AuthCallbackScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const AppLogo(size: 36, borderRadius: BorderRadius.all(Radius.circular(10))),
+              const AppLogo(size: 46, borderRadius: BorderRadius.all(Radius.circular(10))),
               const SizedBox(height: 12),
               Text(
                 _error == null ? 'Signing you in…' : 'Could not sign you in',

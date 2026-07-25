@@ -10,6 +10,7 @@ import 'package:faithful_journal/widgets/app_journal_text_field.dart';
 import 'package:faithful_journal/widgets/auth_required_sheet.dart';
 import 'package:faithful_journal/widgets/discard_changes_dialog.dart';
 import 'package:faithful_journal/widgets/app_logo.dart';
+import 'package:faithful_journal/widgets/searchable_combo_box.dart';
 
 class QuestionEditorScreen extends StatefulWidget {
   final String? entryId;
@@ -26,6 +27,7 @@ class _QuestionEditorScreenState extends State<QuestionEditorScreen> {
   final _formKey = GlobalKey<FormState>();
   final _scriptureController = TextEditingController();
   final _scriptureTextController = TextEditingController();
+  final _topicController = TextEditingController();
   final _questionController = TextEditingController();
   final _beginningToUnderstandController = TextEditingController();
 
@@ -58,6 +60,7 @@ class _QuestionEditorScreenState extends State<QuestionEditorScreen> {
 
     _scriptureController.addListener(_markDirty);
     _scriptureTextController.addListener(_markDirty);
+    _topicController.addListener(_markDirty);
     _questionController.addListener(_markDirty);
     _beginningToUnderstandController.addListener(_markDirty);
 
@@ -82,6 +85,7 @@ class _QuestionEditorScreenState extends State<QuestionEditorScreen> {
     _isEditing = true;
     _scriptureController.text = _existing!.scriptureReference;
     _scriptureTextController.text = _existing!.scriptureText ?? '';
+    _topicController.text = _existing!.topic;
     _questionController.text = _existing!.question ?? '';
     _beginningToUnderstandController.text = _existing!.beginningToUnderstand ?? '';
     _suspendDirty = false;
@@ -93,6 +97,7 @@ class _QuestionEditorScreenState extends State<QuestionEditorScreen> {
     _unsavedChanges?.clear(_unsavedKey);
     _scriptureController.dispose();
     _scriptureTextController.dispose();
+    _topicController.dispose();
     _questionController.dispose();
     _beginningToUnderstandController.dispose();
     super.dispose();
@@ -161,6 +166,7 @@ class _QuestionEditorScreenState extends State<QuestionEditorScreen> {
     if (formState == null) return;
     if (!formState.validate()) return;
     final entryService = context.read<EntryService>();
+    final canonicalTopic = entryService.canonicalizeTopic(_topicController.text.trim());
 
     try {
       await entryService.ensureAuthenticated();
@@ -188,6 +194,7 @@ class _QuestionEditorScreenState extends State<QuestionEditorScreen> {
           entryType: JournalEntryType.question,
           scriptureReference: _scriptureController.text.trim(),
           scriptureText: _scriptureTextController.text.trim().isEmpty ? null : _scriptureTextController.text.trim(),
+          topic: canonicalTopic,
           question: _questionController.text.trim(),
           beginningToUnderstand: _beginningToUnderstandController.text.trim().isEmpty
               ? null
@@ -212,7 +219,7 @@ class _QuestionEditorScreenState extends State<QuestionEditorScreen> {
           observation: '',
           application: '',
           prayer: '',
-          topic: '',
+          topic: canonicalTopic,
           createdAt: now,
           updatedAt: now,
         );
@@ -245,9 +252,10 @@ class _QuestionEditorScreenState extends State<QuestionEditorScreen> {
   @override
   Widget build(BuildContext context) {
     final showUnderstanding = _isEditing;
+    final entryService = context.watch<EntryService>();
     return PopScope(
       canPop: false,
-      onPopInvoked: (didPop) async {
+      onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
         await _attemptLeave();
       },
@@ -312,6 +320,24 @@ class _QuestionEditorScreenState extends State<QuestionEditorScreen> {
                   ),
                   minLines: 4,
                   maxLines: 6,
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Text('Topic', style: context.textStyles.titleMedium),
+                const SizedBox(height: AppSpacing.sm),
+                SearchableComboBox(
+                  controller: _topicController,
+                  labelText: 'Topic',
+                  hintText: 'Type to search or create a new topic…',
+                  options: entryService.getAllTopics(),
+                  allowCustom: true,
+                  onSelected: (selection) {
+                    final canonical = entryService.canonicalizeTopic(selection);
+                    _topicController.value = TextEditingValue(
+                      text: canonical,
+                      selection: TextSelection.collapsed(offset: canonical.length),
+                    );
+                    _markDirty();
+                  },
                 ),
                 const SizedBox(height: AppSpacing.lg),
                 Text('Question', style: context.textStyles.titleMedium),

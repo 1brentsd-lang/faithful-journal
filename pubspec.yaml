@@ -43,3 +43,6 @@ flutter_launcher_icons:
   ios: true
   image_path: assets/images/FJ_Logo.png
   remove_alpha_ios: true
+  web:
+    generate: true
+    image_path: assets/images/FJ_Logo.png
